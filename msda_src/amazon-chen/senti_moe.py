@@ -14,14 +14,15 @@ from torch.autograd import Variable
 import torch.utils.data as data
 
 sys.path.append('../')
-from model_utils import get_model_class, get_critic_class
-from model_utils.domain_critic import ClassificationD, MMD, CoralD, WassersteinD
-from utils.io import AmazonDataset, AmazonDomainDataset
-from utils.io import say
-from utils.op import softmax
+from msda_src.model_utils import get_model_class, get_critic_class
+from msda_src.model_utils.domain_critic import ClassificationD, MMD, CoralD, WassersteinD
+from msda_src.utils.io import AmazonDataset, AmazonDomainDataset
+from msda_src.utils.io import say
+from msda_src.utils.op import softmax
 
 from sklearn.metrics import confusion_matrix
 from sklearn.manifold import TSNE
+
 
 class HLoss(nn.Module):
     def __init__(self):
@@ -332,13 +333,14 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
 
             # say("\r" + " " * 50)
             # TODO: print train acc as well
+            # print("loss dan", loss_dan)
             say("{} MTL loss: {:.4f}, MOE loss: {:.4f}, DAN loss: {:.4f}, "
                 "loss: {:.4f}, dev acc/oracle: {:.4f}/{:.4f}\n"
                 .format(iter_cnt,
-                        loss_mtl.data[0],
-                        loss_moe.data[0],
-                        loss_dan.data[0],
-                        loss.data[0],
+                        loss_mtl.item(),
+                        loss_moe.item(),
+                        loss_dan.item(),
+                        loss.item(),
                         curr_dev,
                         oracle_curr_dev
             ))
@@ -349,12 +351,15 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
 def compute_oracle(outputs, label, args):
     ''' Compute the oracle accuracy given outputs from multiple classifiers
     '''
-    oracle = torch.ByteTensor([0] * label.shape[0])
+    # oracle = torch.ByteTensor([0] * label.shape[0])
+    oracle = torch.BoolTensor([0] * label.shape[0])
     if args.cuda:
         oracle = oracle.cuda()
     for i, output in enumerate(outputs):
         pred = output.data.max(dim=1)[1]
-        oracle |= pred.eq(label)
+        # print("pred", pred)
+        # print("label", label)
+        oracle |= pred.eq(label.byte())
     return oracle
 
 def evaluate(encoder, classifiers, mats, loaders, args):
@@ -539,6 +544,7 @@ def train(args):
         # Ms.append(U.mm(U.t()))
 
     unl_filepath = os.path.join(DATA_DIR, "%s_train.svmlight" % (args.test))
+    print("****************", unl_filepath)
     assert (os.path.exists(unl_filepath))
     unl_dataset = AmazonDomainDataset(unl_filepath)
     unl_loader = data.DataLoader(
@@ -548,7 +554,7 @@ def train(args):
         num_workers=0
     )
 
-    valid_filepath = os.path.join(DATA_DIR, "%s_dev.svmlight" % (args.test))
+    valid_filepath = os.path.join(DATA_DIR, "%s_test.svmlight" % (args.test))  # No dev files
     valid_dataset = AmazonDataset(valid_filepath)
     valid_loader = data.DataLoader(
         valid_dataset,
@@ -654,7 +660,7 @@ def train(args):
         if curr_dev >= best_dev:
             best_dev = curr_dev
             best_test = curr_test
-            print confusion_mat
+            print(confusion_mat)
             if args.save_model:
                 say(colored("Save model to {}\n".format(args.save_model + ".best"), 'red'))
                 torch.save([encoder, classifiers, Us, Ps, Ns], args.save_model + ".best")
@@ -667,22 +673,22 @@ def test_mahalanobis_metric():
     S = torch.FloatTensor(4, 5).normal_()
     p = Variable(p)# .cuda()
     S = Variable(S)# .cuda()
-    print p, S
+    print(p, S)
     encoder = nn.Sequential(nn.Linear(5, 5), nn.ReLU())
     encoder = encoder# .cuda()
     nn.init.xavier_normal(encoder[0].weight)
     nn.init.constant(encoder[0].bias, 0.1)
-    print encoder[0].weight
+    print(encoder[0].weight)
     d = mahalanobis_metric(p, S, args, encoder)
-    print d
+    print(d)
 
 import argparse
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
     argparser.add_argument("--cuda", action="store_true")
-    argparser.add_argument("--train", type=str,
+    argparser.add_argument("--train", type=str, default="books,dvd,kitchen",
                            help="multi-source domains for training, separated with (,)")
-    argparser.add_argument("--test", type=str,
+    argparser.add_argument("--test", type=str, default="electronics",
                            help="target domain for testing")
     argparser.add_argument("--eval_only", action="store_true")
     argparser.add_argument("--critic", type=str, default="mmd")

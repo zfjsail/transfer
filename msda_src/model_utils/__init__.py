@@ -1,12 +1,12 @@
 
-from .dan import DAN
+# from .dan import DAN
 from .lstm import LSTM
 from .cnn import CNN
 from .mlp import MLP
 from .tagger import Tagger
 
 MODEL_CLASS = {
-    'dan': DAN,
+    # 'dan': DAN,
     'lstm' : LSTM,
     'gru' : LSTM,
     'cnn' : CNN,

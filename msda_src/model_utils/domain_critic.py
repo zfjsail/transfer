@@ -6,10 +6,11 @@ import torch.autograd as autograd
 from torch.autograd import Variable
 import torch.nn.functional as F
 
-from flip_gradient import flip_gradient
+from msda_src.model_utils.flip_gradient import flip_gradient
 
 from functools import partial
-import utils
+from msda_src.model_utils import utils
+
 
 class ClassificationD(nn.Module):
     @staticmethod

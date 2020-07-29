@@ -186,6 +186,7 @@ class AmazonDataset(data.Dataset):
     ''' Load svmlight-formated datasets '''
     def __init__(self, file_path):
         self.file_path = file_path
+        print("filepath", file_path)
         X, Y = load_svmlight_file(file_path) # X is a sparse matrix
         # L = [X[i].nonzero()[0].shape[0] for i in range(X.shape[0])]
         X = X.todense().astype(np.float32)
