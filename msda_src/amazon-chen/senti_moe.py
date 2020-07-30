@@ -161,6 +161,7 @@ def biaffine_metric(p, S, U, W, V, args, encoder = None):
 
 DATA_DIR = "../../msda-data/amazon/chen12"
 
+
 def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args, optim_model):
     map(lambda m: m.train(), [encoder, critic] + classifiers)
 
@@ -258,7 +259,7 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
                                          Us[0], Ws[0], Vs[0], # for biaffine metric, we use a unified matrix
                                          args) for j in source_ids ]
             else:
-                source_alphas = [ metric(hiddens[i],
+                source_alphas = [ metric(hiddens[i],  # i^th source
                                          hiddens[j].detach(),
                                          hidden_corresponding_labels[j],
                                          Us[j], Ps[j], Ns[j],
@@ -269,6 +270,8 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
             # print torch.cat([ x.unsqueeze(1) for x in support_alphas ], 1)
             support_alphas = softmax(support_alphas)
 
+            # print("support_alphas after softmax", support_alphas)
+
             # meta-supervision: KL loss over \alpha and real source
             source_alphas = softmax(source_alphas) # [ 32, 32, 32 ]
             source_labels = [ torch.FloatTensor([x==i]) for x in source_ids ] # one-hot
@@ -278,6 +281,8 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
 
             source_labels = Variable(torch.stack(source_labels, dim=0)) # 3*1
             source_alphas = torch.stack(source_alphas, dim=0)
+            print("source_alpha after stack", source_alphas.size())
+
             source_labels = source_labels.expand_as(source_alphas).permute(1,0)
             source_alphas = source_alphas.permute(1,0)
             loss_kl.append(kl_criterion(source_alphas, source_labels))
@@ -478,6 +483,7 @@ def predict(args):
         )
     say(colored("Test accuracy/oracle {:.4f}/{:.4f}\n".format(acc, oracle_acc), 'red'))
 
+
 def train(args):
     ''' Training Strategy
 
@@ -500,6 +506,9 @@ def train(args):
 
     # encoder is shared across domains
     encoder = encoder_class(args)
+
+    print()
+    print("encoder", encoder)
 
     say("Transferring from %s to %s\n" % (args.train, args.test))
     source_train_sets = args.train.split(',')
@@ -533,20 +542,20 @@ def train(args):
         else:
             U = torch.FloatTensor(encoder.n_d, args.m_rank)
 
-        nn.init.xavier_uniform(U)
+        nn.init.xavier_uniform_(U)
         Us.append(U)
         P = torch.FloatTensor(encoder.n_d, args.m_rank)
-        nn.init.xavier_uniform(P)
+        nn.init.xavier_uniform_(P)
         Ps.append(P)
         N = torch.FloatTensor(encoder.n_d, args.m_rank)
-        nn.init.xavier_uniform(N)
+        nn.init.xavier_uniform_(N)
         Ns.append(N)
         # Ms.append(U.mm(U.t()))
 
     unl_filepath = os.path.join(DATA_DIR, "%s_train.svmlight" % (args.test))
     print("****************", unl_filepath)
     assert (os.path.exists(unl_filepath))
-    unl_dataset = AmazonDomainDataset(unl_filepath)
+    unl_dataset = AmazonDomainDataset(unl_filepath)  # using domain as labels
     unl_loader = data.DataLoader(
         unl_dataset,
         batch_size=args.batch_size,
@@ -697,7 +706,7 @@ if __name__ == '__main__':
     argparser.add_argument("--max_epoch", type=int, default=100)
     argparser.add_argument("--lr", type=float, default=1e-4)
     argparser.add_argument("--lr_d", type=float, default=1e-4)
-    argparser.add_argument("--lambda_critic", type=float, default=1)
+    argparser.add_argument("--lambda_critic", type=float, default=0)
     argparser.add_argument("--lambda_gp", type=float, default=10)
     argparser.add_argument("--lambda_moe", type=float, default=1)
     argparser.add_argument("--m_rank", type=int, default=10)
