@@ -57,7 +57,7 @@ parser.add_argument('--hidden-units', type=str, default="32,8",
                     help="Hidden units in each hidden layer, splitted with comma")
 parser.add_argument('--heads', type=str, default="8,8,1",
                     help="Heads in each layer, splitted with comma")
-parser.add_argument('--batch', type=int, default=64, help="Batch size")
+parser.add_argument('--batch', type=int, default=32, help="Batch size")
 parser.add_argument('--dim', type=int, default=64, help="Embedding dimension")
 parser.add_argument('--check-point', type=int, default=2, help="Check point")
 parser.add_argument('--n-type-nodes', type=int, default=3, help="the number of different types of nodes")
@@ -91,6 +91,9 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
 
     for i_batch, batch in enumerate(train_loader):
         X_title, X_author, Y = batch
+        print("x1", X_title)
+        print("x2", X_author)
+        print("y", Y)
         # print(Y)
         bs = Y.shape[0]
 
@@ -100,7 +103,10 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
             Y = Y.cuda()
 
         optimizer.zero_grad()
-        output, _ = model(X_title.float(), X_author.float())
+        output, hidden = model(X_title.float(), X_author.float())
+        print("hidden", hidden)
+
+        raise
 
         loss_train = F.nll_loss(output, Y.long())
         loss += bs * loss_train.item()

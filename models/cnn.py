@@ -19,6 +19,10 @@ class CNNMatchModel(nn.Module):
         self.conv2_1 = nn.Conv2d(1, mat2_channel1, mat2_kernel_size1)  # n*mat2_channel1*(input_matrix_size2-mat2_kernel_size1+1)*(input_matrix_size2-mat2_kernel_size1+1)
         self.mat2_flatten_dim = mat2_channel1*((input_matrix_size2-mat2_kernel_size1+1)**2)
         self.fc2_1 = nn.Linear(self.mat2_flatten_dim, mat2_hidden)
+        print("hidden dim", mat1_hidden + mat2_hidden)
+
+        self.n_d = 1024
+        self.n_out = 1024
 
         self.fc_out = nn.Linear(mat1_hidden+mat2_hidden, 2)
 
@@ -38,4 +42,14 @@ class CNNMatchModel(nn.Module):
         hidden = torch.cat((hidden1, hidden2), 1)
         out = self.fc_out(hidden)
         # return F.log_softmax(out, dim=1), F.softmax(out, dim=1)
-        return F.log_softmax(out, dim=1), out
+        return F.log_softmax(out, dim=1), hidden
+
+    @staticmethod
+    def add_config(cfgparser):
+        cfgparser.add_argument("--criterion", type=str, required=False,
+            default="classification", help="which to use for training"
+        )
+        cfgparser.add_argument("--n_in", type=int, help="input dimension", default=5000)
+        cfgparser.add_argument("--n_d", type=int, help="hidden dimension", default=1024)
+        cfgparser.add_argument("--activation", "--act", type=str, help="activation func")
+        cfgparser.add_argument("--dropout", type=float, help="dropout prob", default=0.2)

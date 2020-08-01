@@ -81,12 +81,19 @@ class AffCNNMatchDataset(Dataset):
         test_data["x1"] = self.X_long[n_train:(n_train+n_test)]
         test_data["x2"] = self.X_short[n_train:(n_train+n_test)]
         test_data["y"] = self.Y[n_train:(n_train+n_test)]
-        print("test labels", len(test_data["y"]))
+        print("test labels", len(test_data["y"]), test_data["y"])
+
+        valid_data = {}
+        valid_data["x1"] = self.X_long[n_train+n_test:(n_train+n_test*2)]
+        valid_data["x2"] = self.X_short[n_train+n_test:(n_train+n_test*2)]
+        valid_data["y"] = self.Y[n_train+n_test:(n_train+n_test*2)]
+        print("valid labels", len(valid_data["y"]), valid_data["y"])
 
         out_dir = join(settings.DATA_DIR, "dom-adpt")
         os.makedirs(out_dir, exist_ok=True)
         data_utils.dump_large_obj(train_data, out_dir, "aff_train.pkl")
         data_utils.dump_large_obj(test_data, out_dir, "aff_test.pkl")
+        data_utils.dump_large_obj(valid_data, out_dir, "aff_valid.pkl")
 
         self.N = len(self.Y)
 

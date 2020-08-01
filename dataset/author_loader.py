@@ -90,6 +90,12 @@ class CNNMatchDataset(Dataset):
         test_data["y"] = self.Y[n_train:(n_train+n_test)]
         print("test labels", len(test_data["y"]))
 
+        valid_data = {}
+        valid_data["x1"] = self.X_long[n_train+n_test:(n_train+n_test*2)]
+        valid_data["x2"] = self.X_short[n_train+n_test:(n_train+n_test*2)]
+        valid_data["y"] = self.Y[n_train+n_test:(n_train+n_test*2)]
+        print("valid labels", len(valid_data["y"]))
+
         print("train positive samples", sum(train_data["y"]))
         print("test positive samples", sum(test_data["y"]))
 
@@ -97,6 +103,7 @@ class CNNMatchDataset(Dataset):
         os.makedirs(out_dir, exist_ok=True)
         data_utils.dump_large_obj(train_data, out_dir, "author_train.pkl")
         data_utils.dump_large_obj(test_data, out_dir, "author_test.pkl")
+        data_utils.dump_large_obj(valid_data, out_dir, "author_valid.pkl")
 
     def __len__(self):
         return self.N
