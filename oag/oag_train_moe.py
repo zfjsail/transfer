@@ -6,6 +6,10 @@ from copy import copy, deepcopy
 from termcolor import colored, cprint
 
 import numpy as np
+from sklearn.metrics import precision_recall_fscore_support
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import precision_recall_curve
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -213,7 +217,7 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
 
     for batches, unl_batch in zip(zip(*train_loaders), unl_loader):
         train_batches1, train_batches2, train_labels = zip(*batches)
-        # print("train batches1", train_batches1)
+        # print("train batches1", train_labels[0].size())
         # print("train batches2", train_batches2)
         # print("train labels", train_labels)
         unl_critic_batch1, unl_critic_batch2, unl_critic_label = unl_batch
@@ -287,7 +291,8 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
         source_ids = range(len(train_batches1))
         for i in source_ids:
 
-            support_ids = [x for x in source_ids if x != i]  # experts
+            # support_ids = [x for x in source_ids if x != i]  # experts
+            support_ids = [x for x in source_ids]  # experts
 
             # support_alphas = [ metric(
             #                      hiddens[i],
@@ -382,7 +387,7 @@ def train_epoch(iter_cnt, encoder, classifiers, critic, mats, data_loaders, args
 
         for cls_i, classifier in enumerate(classifiers):
             for name, param in classifier.named_parameters():
-                print(cls_i, name, param.grad)
+                # print(cls_i, name, param.grad)
                 pass
 
         if iter_cnt % 5 == 0:
@@ -511,6 +516,159 @@ def evaluate(encoder, classifiers, mats, loaders, args):
     return (acc, oracle_acc), confusion_matrix(y_true, y_pred)
 
 
+def evaluate_cross(encoder, classifiers, mats, loaders, return_best_thrs, args, thr=None):
+    ''' Evaluate model using MOE
+    '''
+    map(lambda m: m.eval(), [encoder] + classifiers)
+
+    if args.metric == "biaffine":
+        Us, Ws, Vs = mats
+    else:
+        Us, Ps, Ns = mats
+
+    source_loaders, valid_loaders_src = loaders
+    domain_encs = domain_encoding(source_loaders, args, encoder)
+
+    source_ids = range(len(valid_loaders_src))
+
+    thresholds = []
+    metrics = []
+    alphas_weights = np.zeros(shape=(4, 4))
+
+    for src_i in range(len(valid_loaders_src)):
+        valid_loader = valid_loaders_src[src_i]
+
+        oracle_correct = 0
+        correct = 0
+        tot_cnt = 0
+        y_true = []
+        y_pred = []
+        y_score = []
+
+        # support_ids = [x for x in source_ids if x != src_i]  # experts
+        support_ids = [x for x in source_ids]  # experts
+        cur_domain_encs = [domain_encs[x] for x in support_ids]
+        cur_Us = [Us[x] for x in support_ids]
+        cur_Ps = [Ps[x] for x in support_ids]
+        cur_Ns = [Ns[x] for x in support_ids]
+
+        cur_alpha_weights = [[]] * 4
+        cur_alpha_weights_stack = np.empty(shape=(0, len(support_ids)))
+
+        for batch1, batch2, label in valid_loader:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                label = label.cuda()
+            # print("eval labels", label)
+
+            batch1 = Variable(batch1)
+            batch2 = Variable(batch2)
+            _, hidden = encoder(batch1, batch2)
+            # source_ids = range(len(domain_encs))
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(cur_domain_encs, cur_Us, cur_Ps, cur_Ns)]
+            # alphas = [ (1 - x / sum(alphas)) for x in alphas ]
+            alphas = softmax(alphas)
+            # print("alphas", alphas[0].mean(), alphas[1].mean(), alphas[2].mean())
+            # print("alphas", alphas)
+
+            alphas = []
+            for al_i in range(len(support_ids)):
+                alphas.append(torch.zeros(size=(batch1.size()[0], )))
+            alphas[src_i] = torch.ones(size=(batch1.size()[0], ))
+
+            alpha_cat = torch.zeros(size=(alphas[0].shape[0], len(support_ids)))
+            for col, a_list in enumerate(alphas):
+                alpha_cat[:, col] = a_list
+            cur_alpha_weights_stack = np.concatenate((cur_alpha_weights_stack, alpha_cat.detach().numpy()))
+            # for j, supp_id in enumerate(support_ids):
+                # cur_alpha_weights[supp_id] += alphas[j].data.tolist()
+                # cur_alpha_weights[supp_id].append(alphas[j].mean().item())
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
+
+            outputs = [F.softmax(classifiers[j](hidden), dim=1) for j in support_ids]
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
+            # print("pred output", output)
+            pred = output.data.max(dim=1)[1]
+            oracle_eq = compute_oracle(outputs, label, args)
+
+            if args.eval_only:
+                for i in range(batch1.shape[0]):
+                    for j in range(len(alphas)):
+                        say("{:.4f}: [{:.4f}, {:.4f}], ".format(
+                            alphas[j].data[i], outputs[j].data[i][0], outputs[j].data[i][1])
+                        )
+                    oracle_TF = "T" if oracle_eq[i] == 1 else colored("F", 'red')
+                    say("gold: {}, pred: {}, oracle: {}\n".format(label[i], pred[i], oracle_TF))
+                say("\n")
+                # print torch.cat(
+                #         [
+                #             torch.cat([ x.unsqueeze(1) for x in alphas ], 1),
+                #             torch.cat([ x for x in outputs ], 1)
+                #         ], 1
+                #     )
+
+            y_true += label.tolist()
+            y_pred += pred.tolist()
+            y_score += output[:, 1].data.tolist()
+            correct += pred.eq(label).sum()
+            oracle_correct += oracle_eq.sum()
+            tot_cnt += output.size(0)
+
+        # print("y_true", y_true)
+        # print("y_pred", y_pred)
+
+        # for j in support_ids:
+        #     print(src_i, j, cur_alpha_weights[j])
+        #     alphas_weights[src_i, j] = np.mean(cur_alpha_weights[j])
+        # print(alphas_weights)
+        alphas_weights[src_i, support_ids] = np.mean(cur_alpha_weights_stack, axis=0)
+
+        if thr is not None:
+            print("using threshold %.4f" % thr[src_i])
+            y_score = np.array(y_score)
+            y_pred = np.zeros_like(y_score)
+            y_pred[y_score > thr[src_i]] = 1
+
+        # prec, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary")
+
+        acc = float(correct) / tot_cnt
+        oracle_acc = float(oracle_correct) / tot_cnt
+        # print("source", src_i, "validation results: precision: {:.2f}, recall: {:.2f}, f1: {:.2f}".format(
+        #     prec*100, rec*100, f1*100))
+    # return (acc, oracle_acc), confusion_matrix(y_true, y_pred)
+
+        prec, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary")
+        auc = roc_auc_score(y_true, y_score)
+        print("source {}, AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}".format(
+            src_i, auc*100, prec*100, rec*100, f1*100))
+
+        metrics.append([auc, prec, rec, f1])
+
+        if return_best_thrs:
+            precs, recs, thrs = precision_recall_curve(y_true, y_score)
+            f1s = 2 * precs * recs / (precs + recs)
+            f1s = f1s[:-1]
+            thrs = thrs[~np.isnan(f1s)]
+            f1s = f1s[~np.isnan(f1s)]
+            best_thr = thrs[np.argmax(f1s)]
+            print("best threshold=%4f, f1=%.4f", best_thr, np.max(f1s))
+            thresholds.append(best_thr)
+
+    print("source domain weight matrix\n", alphas_weights)
+
+    metrics = np.array(metrics)
+    return thresholds, metrics, alphas_weights
+
+
 def predict(args):
     encoder, classifiers, Us, Ps, Ns = torch.load(args.load_model)
     map(lambda m: m.eval(), [encoder] + classifiers)
@@ -600,6 +758,8 @@ def train(args):
     say("Transferring from %s to %s\n" % (args.train, args.test))
     source_train_sets = args.train.split(',')
     train_loaders = []
+    valid_loaders_src = []
+    test_loaders_src = []
     Us = []
     Ps = []
     Ns = []
@@ -620,6 +780,24 @@ def train(args):
             num_workers=0
         )
         train_loaders.append(train_loader)
+
+        cur_valid_dataset = ProcessedCNNInputDataset(source, "valid")
+        cur_valid_loader = data.DataLoader(
+            cur_valid_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+        valid_loaders_src.append(cur_valid_loader)
+
+        cur_test_dataset = ProcessedCNNInputDataset(source, "test")
+        cur_test_loader = data.DataLoader(
+            cur_test_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+        test_loaders_src.append(cur_test_loader)
 
         if args.metric == "biaffine":
             U = torch.FloatTensor(encoder.n_d, encoder.n_d)
@@ -735,7 +913,7 @@ def train(args):
     # encoder.load_state_dict(torch.load(os.path.join(settings.OUT_VENUE_DIR, "venue-matching-cnn.mdl")))
 
     for epoch in range(args.max_epoch):
-        say("epoch: {}".format(epoch))
+        say("epoch: {}\n".format(epoch))
         if args.metric == "biaffine":
             mats = [Us, Ws, Vs]
         else:
@@ -749,6 +927,23 @@ def train(args):
             args,
             optim_model,
             task_params
+        )
+
+        thrs, metrics_val, src_weights_val = evaluate_cross(
+            encoder, classifiers,
+            mats,
+            [train_loaders, valid_loaders_src],
+            return_best_thrs=True,
+            args=args
+        )
+
+        _, metrics_test, src_weights_test = evaluate_cross(
+            encoder, classifiers,
+            mats,
+            [train_loaders, test_loaders_src],
+            return_best_thrs=False,
+            args=args,
+            thr=thrs
         )
 
         (curr_dev, oracle_curr_dev), confusion_mat = evaluate(
@@ -811,9 +1006,9 @@ if __name__ == '__main__':
     argparser.add_argument("--lr_d", type=float, default=1e-4)
     argparser.add_argument("--lambda_critic", type=float, default=0)
     argparser.add_argument("--lambda_gp", type=float, default=0)
-    argparser.add_argument("--lambda_moe", type=float, default=1)
+    argparser.add_argument("--lambda_moe", type=float, default=0)
     argparser.add_argument("--m_rank", type=int, default=10)
-    argparser.add_argument("--lambda_entropy", type=float, default=0.1)
+    argparser.add_argument("--lambda_entropy", type=float, default=0.0)
     argparser.add_argument("--load_model", type=str)
     argparser.add_argument("--save_model", type=str)
     argparser.add_argument("--metric", type=str, default="mahalanobis",

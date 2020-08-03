@@ -64,7 +64,7 @@ parser.add_argument('--n-type-nodes', type=int, default=3, help="the number of d
 parser.add_argument('--instance-normalization', action='store_true', default=True,
                     help="Enable instance normalization")
 parser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
-parser.add_argument('--entity-type', type=str, default="author", help="Types of entities to match")
+parser.add_argument('--entity-type', type=str, default="paper", help="Types of entities to match")
 
 parser.add_argument('--file-dir', type=str, default=settings.AFF_DATA_DIR, help="Input file directory")
 parser.add_argument('--alpha', type=float, default=0.2, help="Alpha for the leaky_relu.")
@@ -91,9 +91,9 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
 
     for i_batch, batch in enumerate(train_loader):
         X_title, X_author, Y = batch
-        print("x1", X_title)
-        print("x2", X_author)
-        print("y", Y)
+        # print("x1", X_title)
+        # print("x2", X_author)
+        # print("y", Y)
         # print(Y)
         bs = Y.shape[0]
 
@@ -104,9 +104,7 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
 
         optimizer.zero_grad()
         output, hidden = model(X_title.float(), X_author.float())
-        print("hidden", hidden)
-
-        raise
+        # print("hidden", hidden)
 
         loss_train = F.nll_loss(output, Y.long())
         loss += bs * loss_train.item()
