@@ -720,7 +720,7 @@ def train(args):
         task_params += Ws
         task_params += Vs
 
-    optim_model = optim.Adagrad(
+    optim_model = optim.Adagrad(  # use adagrad instead of adam
         filter(requires_grad, task_params),
         lr=args.lr,
         weight_decay=1e-4
@@ -732,9 +732,10 @@ def train(args):
     best_test = 0
     iter_cnt = 0
 
-    encoder.load_state_dict(torch.load(os.path.join(settings.OUT_VENUE_DIR, "venue-matching-cnn.mdl")))
+    # encoder.load_state_dict(torch.load(os.path.join(settings.OUT_VENUE_DIR, "venue-matching-cnn.mdl")))
 
     for epoch in range(args.max_epoch):
+        say("epoch: {}".format(epoch))
         if args.metric == "biaffine":
             mats = [Us, Ws, Vs]
         else:
@@ -797,7 +798,7 @@ import argparse
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
     argparser.add_argument("--cuda", action="store_true")
-    argparser.add_argument("--train", type=str, default="author,author",
+    argparser.add_argument("--train", type=str, default="author,venue,paper,aff",
                            help="multi-source domains for training, separated with (,)")
     argparser.add_argument("--test", type=str, default="aff",
                            help="target domain for testing")
@@ -805,14 +806,14 @@ if __name__ == '__main__':
     argparser.add_argument("--critic", type=str, default="mmd")
     argparser.add_argument("--batch_size", type=int, default=32)
     argparser.add_argument("--batch_size_d", type=int, default=32)
-    argparser.add_argument("--max_epoch", type=int, default=20)
+    argparser.add_argument("--max_epoch", type=int, default=200)
     argparser.add_argument("--lr", type=float, default=1e-4)
     argparser.add_argument("--lr_d", type=float, default=1e-4)
     argparser.add_argument("--lambda_critic", type=float, default=0)
     argparser.add_argument("--lambda_gp", type=float, default=0)
-    argparser.add_argument("--lambda_moe", type=float, default=0)
+    argparser.add_argument("--lambda_moe", type=float, default=1)
     argparser.add_argument("--m_rank", type=int, default=10)
-    argparser.add_argument("--lambda_entropy", type=float, default=0.0)
+    argparser.add_argument("--lambda_entropy", type=float, default=0.1)
     argparser.add_argument("--load_model", type=str)
     argparser.add_argument("--save_model", type=str)
     argparser.add_argument("--metric", type=str, default="mahalanobis",
