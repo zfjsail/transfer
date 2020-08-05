@@ -51,10 +51,10 @@ argparser.add_argument("--lr", type=float, default=1e-4)
 argparser.add_argument("--lr_d", type=float, default=1e-4)
 argparser.add_argument("--lambda_critic", type=float, default=0)
 argparser.add_argument("--lambda_gp", type=float, default=0)
-argparser.add_argument("--lambda_moe", type=float, default=0)
+argparser.add_argument("--lambda_moe", type=float, default=1)
 argparser.add_argument("--lambda_mtl", type=float, default=0.3)
-argparser.add_argument("--lambda_all", type=float, default=1)
-argparser.add_argument("--lambda_dst", type=float, default=1)
+argparser.add_argument("--lambda_all", type=float, default=0)
+argparser.add_argument("--lambda_dst", type=float, default=0)
 argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
@@ -635,6 +635,7 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
         # print("weight mix", classifier_mix.multp)
         outputs_upper_logits = torch.log_softmax(outputs, dim=1)
         # outputs_upper_logits = torch.log(cur_output_dst_mem)
+        outputs_upper_logits = output_moe
         # print("outputs_upper_logits", outputs_upper_logits)
         pred = outputs_upper_logits.data.max(dim=1)[1]
         # oracle_eq = compute_oracle(outputs_upper_logits, label, args)
@@ -683,6 +684,7 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
     loss /= tot_cnt
 
     prec, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary")
+    # print("y_score", y_score)
     auc = roc_auc_score(y_true, y_score)
     print("Loss: {:.4f}, AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}".format(
         loss, auc * 100, prec * 100, rec * 100, f1 * 100))

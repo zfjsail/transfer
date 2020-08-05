@@ -21,8 +21,6 @@ from sklearn.metrics import precision_recall_curve
 from dataset import ProcessedCNNInputDataset
 from models.cnn import CNNMatchModel
 from utils.data_utils import ChunkSampler
-from utils import feature_utils
-from utils import eval_utils
 from utils import settings
 
 import logging
@@ -53,34 +51,14 @@ parser.add_argument('--weight-decay', type=float, default=1e-3,
                     help='Weight decay (L2 loss on parameters).')
 parser.add_argument('--dropout', type=float, default=0.2,
                     help='Dropout rate (1 - keep probability).')
-parser.add_argument('--attn-dropout', type=float, default=0.,
-                    help='Dropout rate (1 - keep probability).')
-parser.add_argument('--hidden-units', type=str, default="32,8",
-                    help="Hidden units in each hidden layer, splitted with comma")
-parser.add_argument('--heads', type=str, default="8,8,1",
-                    help="Heads in each layer, splitted with comma")
 parser.add_argument('--batch', type=int, default=32, help="Batch size")
-parser.add_argument('--dim', type=int, default=64, help="Embedding dimension")
 parser.add_argument('--check-point', type=int, default=2, help="Check point")
-parser.add_argument('--n-type-nodes', type=int, default=3, help="the number of different types of nodes")
-parser.add_argument('--instance-normalization', action='store_true', default=True,
-                    help="Enable instance normalization")
 parser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
 parser.add_argument('--entity-type', type=str, default="venue", help="Types of entities to match")
 
 parser.add_argument('--file-dir', type=str, default=settings.AFF_DATA_DIR, help="Input file directory")
-parser.add_argument('--alpha', type=float, default=0.2, help="Alpha for the leaky_relu.")
 parser.add_argument('--train-ratio', type=float, default=10, help="Training ratio (0, 100)")
 parser.add_argument('--valid-ratio', type=float, default=10, help="Validation ratio (0, 100)")
-parser.add_argument('--class-weight-balanced', action='store_true', default=False,
-                    help="Adjust weights inversely proportional"
-                         " to class frequencies in the input data")
-parser.add_argument('--use-vertex-feature', action='store_true', default=False,
-                    help="Whether to use vertices' structural features")
-parser.add_argument('--sequence-size', type=int, default=16,
-                    help="Sequence size (only useful for pscn)")
-parser.add_argument('--neighbor-size', type=int, default=5,
-                    help="Neighborhood size (only useful for pscn)")
 
 
 args = parser.parse_args()
@@ -96,10 +74,7 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
 
     for i_batch, batch in enumerate(train_loader):
         X_title, X_author, Y = batch
-        # print("x1", X_title)
-        # print("x2", X_author)
-        # print("y", Y)
-        # print(Y)
+
         bs = Y.shape[0]
 
         if args.cuda:
@@ -109,7 +84,6 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
 
         optimizer.zero_grad()
         output, hidden = model(X_title.float(), X_author.float())
-        # print("hidden", hidden)
 
         loss_train = F.nll_loss(output, Y.long())
         loss += bs * loss_train.item()
@@ -122,11 +96,16 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
                       loss / total,
                       epoch)
 
+    metrics_val = None
+    metrics_test = None
+
     if (epoch + 1) % args.check_point == 0:
         logger.info("epoch %d, checkpoint! validation...", epoch)
-        best_thr = evaluate(epoch, valid_loader, model, return_best_thr=True, args=args)
+        best_thr, metrics_val = evaluate(epoch, valid_loader, model, return_best_thr=True, args=args)
         logger.info('eval on test data!...')
-        evaluate(epoch, test_loader, model, thr=best_thr, args=args)
+        _, metrics_test = evaluate(epoch, test_loader, model, thr=best_thr, args=args)
+
+    return metrics_val, metrics_test
 
 
 def evaluate(epoch, loader, model, thr=None, return_best_thr=False, args=args):
@@ -166,6 +145,8 @@ def evaluate(epoch, loader, model, thr=None, return_best_thr=False, args=args):
     logger.info("loss: %.4f AUC: %.4f Prec: %.4f Rec: %.4f F1: %.4f",
                 loss / total, auc, prec, rec, f1)
 
+    metrics = [loss/total, auc, prec, rec, f1]
+
     if return_best_thr:  # valid
         precs, recs, thrs = precision_recall_curve(y_true, y_score)
         f1s = 2 * precs * recs / (precs + recs)
@@ -177,12 +158,12 @@ def evaluate(epoch, loader, model, thr=None, return_best_thr=False, args=args):
         writer.add_scalar('val_loss',
                           loss / total,
                           epoch)
-        return best_thr
+        return best_thr, metrics
     else:
         writer.add_scalar('test_f1',
                           f1,
                           epoch)
-        return None
+        return None, metrics
 
 
 def main(args=args):
@@ -194,20 +175,17 @@ def main(args=args):
     if args.cuda:
         torch.cuda.manual_seed(args.seed + args.seed_delta)
 
-    # dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.build_index_window, args.seed, args.shuffle)
     dataset = ProcessedCNNInputDataset(args.entity_type, "train")
+    dataset_valid = ProcessedCNNInputDataset(args.entity_type, "valid")
     dataset_test = ProcessedCNNInputDataset(args.entity_type, "test")
     N = len(dataset)
+    N_valid = len(dataset_valid)
     N_test = len(dataset_test)
-    # train_start, valid_start, test_start = \
-    #     0, int(N * args.train_ratio / 100), int(N * (args.train_ratio + args.valid_ratio) / 100)
-    train_start = 0
-    valid_start = int(N * 4 / 5)
     train_loader = DataLoader(dataset, batch_size=args.batch,
-                              sampler=ChunkSampler(valid_start - train_start, 0))
-    valid_loader = DataLoader(dataset, batch_size=args.batch,
-                              sampler=ChunkSampler(N - valid_start, valid_start))
-    test_loader = DataLoader(dataset, batch_size=args.batch,
+                              sampler=ChunkSampler(N, 0))
+    valid_loader = DataLoader(dataset_valid, batch_size=args.batch,
+                              sampler=ChunkSampler(N_valid, 0))
+    test_loader = DataLoader(dataset_test, batch_size=args.batch,
                              sampler=ChunkSampler(N_test, 0))
     model = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
                           mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
@@ -225,18 +203,30 @@ def main(args=args):
     t_total = time.time()
     logger.info("training...")
 
-    model.load_state_dict(torch.load(join(settings.OUT_VENUE_DIR, "venue-matching-cnn.mdl")))
+    model_dir = join(settings.OUT_DIR, args.entity_type)
+    os.makedirs(model_dir, exist_ok=True)
+
+    # model.load_state_dict(torch.load(join(settings.OUT_VENUE_DIR, "venue-matching-cnn.mdl")))
     evaluate(0, test_loader, model, thr=None, args=args)
+    min_loss_val = None
+    best_test_metrics = None
     for epoch in range(args.epochs):
-        train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args=args)
+        metrics_val, metrics_test = train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args=args)
+        if metrics_val is not None:
+            if min_loss_val is None or min_loss_val > metrics_val[0]:
+                min_loss_val = metrics_val[0]
+                best_test_metrics = metrics_test
+                torch.save(model.state_dict(), join(model_dir, "cnn-match-best-now.mdl"))
 
     logger.info("optimization Finished!")
     logger.info("total time elapsed: {:.4f}s".format(time.time() - t_total))
 
-    model_dir = join(settings.OUT_DIR, 'aff')
-    os.makedirs(model_dir, exist_ok=True)
-    torch.save(model.state_dict(), join(model_dir, 'paper-matching-cnn.mdl'))
-    logger.info('paper matching CNN model saved')
+    # torch.save(model.state_dict(), join(model_dir, 'paper-matching-cnn.mdl'))
+    # logger.info('paper matching CNN model saved')
+
+    logger.info("min valid loss {:.4f}, best test metrics: AUC: {:.2f}, Prec: {:.4f}, Rec: {:.4f}, F1: {:.4f}".format(
+        min_loss_val, best_test_metrics[1], best_test_metrics[2], best_test_metrics[3], best_test_metrics[4]
+    ))
 
     # evaluate(args.epochs, test_loader, model, thr=best_thr, args=args)
     writer.close()
