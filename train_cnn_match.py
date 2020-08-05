@@ -46,8 +46,8 @@ parser.add_argument('--mat2-hidden', type=int, default=512, help='Matrix2 hidden
 parser.add_argument('--build-index-window', type=int, default=5, help='Matrix2 hidden dim')
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--seed-delta', type=int, default=0, help='Random seed.')
-parser.add_argument('--epochs', type=int, default=100, help='Number of epochs to train.')
-parser.add_argument('--lr', type=float, default=0.002, help='Initial learning rate.')
+parser.add_argument('--epochs', type=int, default=500, help='Number of epochs to train.')
+parser.add_argument('--lr', type=float, default=0.05, help='Initial learning rate.')
 parser.add_argument('--initial-accumulator-value', type=float, default=0.01, help='Initial accumulator value.')
 parser.add_argument('--weight-decay', type=float, default=1e-3,
                     help='Weight decay (L2 loss on parameters).')
@@ -66,7 +66,7 @@ parser.add_argument('--n-type-nodes', type=int, default=3, help="the number of d
 parser.add_argument('--instance-normalization', action='store_true', default=True,
                     help="Enable instance normalization")
 parser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
-parser.add_argument('--entity-type', type=str, default="paper", help="Types of entities to match")
+parser.add_argument('--entity-type', type=str, default="venue", help="Types of entities to match")
 
 parser.add_argument('--file-dir', type=str, default=settings.AFF_DATA_DIR, help="Input file directory")
 parser.add_argument('--alpha', type=float, default=0.2, help="Alpha for the leaky_relu.")
@@ -220,7 +220,7 @@ def main(args=args):
         model.cuda()
 
     optimizer = optim.Adagrad(model.parameters(), lr=args.lr,
-                              initial_accumulator_value=args.initial_accumulator_value,
+                              # initial_accumulator_value=args.initial_accumulator_value,
                               weight_decay=args.weight_decay)
     t_total = time.time()
     logger.info("training...")
