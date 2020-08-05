@@ -12,6 +12,7 @@ import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import roc_auc_score
@@ -44,6 +45,7 @@ parser.add_argument('--mat2-kernel-size1', type=int, default=2, help='Matrix2 ke
 parser.add_argument('--mat2-hidden', type=int, default=512, help='Matrix2 hidden dim')
 parser.add_argument('--build-index-window', type=int, default=5, help='Matrix2 hidden dim')
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
+parser.add_argument('--seed-delta', type=int, default=0, help='Random seed.')
 parser.add_argument('--epochs', type=int, default=100, help='Number of epochs to train.')
 parser.add_argument('--lr', type=float, default=0.002, help='Initial learning rate.')
 parser.add_argument('--initial-accumulator-value', type=float, default=0.01, help='Initial accumulator value.')
@@ -80,7 +82,10 @@ parser.add_argument('--sequence-size', type=int, default=16,
 parser.add_argument('--neighbor-size', type=int, default=5,
                     help="Neighborhood size (only useful for pscn)")
 
+
 args = parser.parse_args()
+
+writer = SummaryWriter('runs/{}_cnn_{}'.format(args.entity_type, args.seed_delta))
 
 
 def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args=args):
@@ -112,6 +117,10 @@ def train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args
         loss_train.backward()
         optimizer.step()
     logger.info("train loss epoch %d: %f", epoch, loss / total)
+
+    writer.add_scalar('training_loss',
+                      loss / total,
+                      epoch)
 
     if (epoch + 1) % args.check_point == 0:
         logger.info("epoch %d, checkpoint! validation...", epoch)
@@ -165,8 +174,14 @@ def evaluate(epoch, loader, model, thr=None, return_best_thr=False, args=args):
         f1s = f1s[~np.isnan(f1s)]
         best_thr = thrs[np.argmax(f1s)]
         logger.info("best threshold=%4f, f1=%.4f", best_thr, np.max(f1s))
+        writer.add_scalar('val_loss',
+                          loss / total,
+                          epoch)
         return best_thr
     else:
+        writer.add_scalar('test_f1',
+                          f1,
+                          epoch)
         return None
 
 
@@ -175,9 +190,9 @@ def main(args=args):
     logger.info('cuda is available %s', args.cuda)
 
     np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    torch.manual_seed(args.seed + args.seed_delta)
     if args.cuda:
-        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed(args.seed + args.seed_delta)
 
     # dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.build_index_window, args.seed, args.shuffle)
     dataset = ProcessedCNNInputDataset(args.entity_type, "train")
@@ -224,6 +239,7 @@ def main(args=args):
     logger.info('paper matching CNN model saved')
 
     # evaluate(args.epochs, test_loader, model, thr=best_thr, args=args)
+    writer.close()
 
 
 if __name__ == '__main__':
