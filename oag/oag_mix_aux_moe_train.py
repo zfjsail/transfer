@@ -89,7 +89,7 @@ argparser.add_argument('--shuffle', action='store_true', default=True, help="Shu
 
 args, _ = argparser.parse_known_args()
 
-writer = SummaryWriter('runs/{}_mix_moe_{}'.format(args.entity_type, args.seed_delta))
+writer = SummaryWriter('runs/{}_mix_moe_{}'.format(args.test, args.seed_delta))
 
 
 class WeightScaler(nn.Module):
