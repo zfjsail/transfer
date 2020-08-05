@@ -15,9 +15,14 @@ class ProcessedCNNInputDataset(Dataset):
         data_dict = data_utils.load_large_obj(data_dir, fname)
         self.x1 = np.array(data_dict["x1"], dtype="float32")
         self.x2 = np.array(data_dict["x2"], dtype="float32")
-        self.y = data_dict["y"]
+        self.y = np.array(data_dict["y"], dtype=int)
 
         self.N = len(self.y)
+
+        self.x1 = torch.from_numpy(self.x1)
+        self.x2 = torch.from_numpy(self.x2)
+        self.y = torch.from_numpy(self.y)
+
 
     def __len__(self):
         return self.N
