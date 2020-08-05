@@ -16,6 +16,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.autograd import Variable
 import torch.utils.data as data
+from torch.utils.tensorboard import SummaryWriter
 
 sys.path.append('../')
 from msda_src.model_utils import get_model_class, get_critic_class
@@ -34,6 +35,61 @@ from utils import settings
 
 import warnings
 warnings.filterwarnings("ignore")
+
+argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
+argparser.add_argument("--cuda", action="store_true")
+argparser.add_argument("--train", type=str, default="author,paper,aff",
+                       help="multi-source domains for training, separated with (,)")
+argparser.add_argument("--test", type=str, default="venue",
+                       help="target domain for testing")
+argparser.add_argument("--eval_only", action="store_true")
+argparser.add_argument("--critic", type=str, default="mmd")
+argparser.add_argument("--batch_size", type=int, default=32)
+argparser.add_argument("--batch_size_d", type=int, default=32)
+argparser.add_argument("--max_epoch", type=int, default=500)
+argparser.add_argument("--lr", type=float, default=1e-4)
+argparser.add_argument("--lr_d", type=float, default=1e-4)
+argparser.add_argument("--lambda_critic", type=float, default=0)
+argparser.add_argument("--lambda_gp", type=float, default=0)
+argparser.add_argument("--lambda_moe", type=float, default=0)
+argparser.add_argument("--lambda_mtl", type=float, default=0.3)
+argparser.add_argument("--lambda_all", type=float, default=1)
+argparser.add_argument("--lambda_dst", type=float, default=1)
+argparser.add_argument("--m_rank", type=int, default=10)
+argparser.add_argument("--lambda_entropy", type=float, default=0.0)
+argparser.add_argument("--load_model", type=str)
+argparser.add_argument("--save_model", type=str)
+argparser.add_argument("--metric", type=str, default="biaffine",
+                       help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
+
+argparser.add_argument('--no-cuda', action='store_true', default=False, help='Disables CUDA training.')
+argparser.add_argument('--matrix-size1', type=int, default=7, help='Matrix size 1.')
+argparser.add_argument('--matrix-size2', type=int, default=4, help='Matrix size 2.')
+argparser.add_argument('--mat1-channel1', type=int, default=8, help='Matrix1 number of channels1.')
+argparser.add_argument('--mat1-kernel-size1', type=int, default=3, help='Matrix1 kernel size1.')
+argparser.add_argument('--mat1-channel2', type=int, default=16, help='Matrix1 number of channel2.')
+argparser.add_argument('--mat1-kernel-size2', type=int, default=2, help='Matrix1 kernel size2.')
+argparser.add_argument('--mat1-hidden', type=int, default=512, help='Matrix1 hidden dim.')
+argparser.add_argument('--mat2-channel1', type=int, default=8, help='Matrix2 number of channels1.')
+argparser.add_argument('--mat2-kernel-size1', type=int, default=2, help='Matrix2 kernel size1.')
+argparser.add_argument('--mat2-hidden', type=int, default=512, help='Matrix2 hidden dim')
+argparser.add_argument('--build-index-window', type=int, default=5, help='Matrix2 hidden dim')
+argparser.add_argument('--seed', type=int, default=42, help='Random seed.')
+argparser.add_argument('--seed-delta', type=int, default=0, help='Random seed.')
+
+argparser.add_argument('--initial-accumulator-value', type=float, default=0.01, help='Initial accumulator value.')
+argparser.add_argument('--weight-decay', type=float, default=1e-3,
+                       help='Weight decay (L2 loss on parameters).')
+# argparser.add_argument('--dropout', type=float, default=0.2,
+#                     help='Dropout rate (1 - keep probability).')
+argparser.add_argument('--attn-dropout', type=float, default=0.,
+                       help='Dropout rate (1 - keep probability).')
+argparser.add_argument('--check-point', type=int, default=2, help="Check point")
+argparser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
+
+args, _ = argparser.parse_known_args()
+
+writer = SummaryWriter('runs/{}_mix_moe_{}'.format(args.entity_type, args.seed_delta))
 
 
 class WeightScaler(nn.Module):
@@ -205,7 +261,7 @@ def biaffine_metric(p, S, U, W, V, args, encoder=None):
 DATA_DIR = "../../msda-data/amazon/chen12"
 
 
-def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, args, optim_model, task_paras):
+def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, args, optim_model, epoch):
     encoders, encoder_dst = encoders
     classifiers, classifier_dst, classifier_mix = classifiers
     map(lambda m: m.train(), encoders + [encoder_dst, classifier_dst, critic, classifier_mix] + classifiers)
@@ -226,6 +282,9 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
         metric = mahalanobis_metric
         Us, Ps, Ns = mats
 
+    loss_total = 0
+    total = 0
+
     for batches, batches_dst, unl_batch in zip(zip(*train_loaders), train_loader_dst, unl_loader):
         train_batches1, train_batches2, train_labels = zip(*batches)
         # print("train batches1", train_labels[0].size())
@@ -236,6 +295,8 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
         batches1_dst, batches2_dst, labels_dst = batches_dst
         # print("batches1_dst", batches1_dst)
         # print("batches2_dst", batches2_dst)
+
+        total += len(batches1_dst)
 
         iter_cnt += 1
         if args.cuda:
@@ -411,8 +472,10 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
         loss_kl = sum(loss_kl)
         loss_entropy = sum(loss_entropy)
         loss += args.lambda_entropy * loss_entropy
-        loss += loss_train_dst
+        loss += loss_train_dst * args.lambda_dst
         loss += loss_all * args.lambda_all
+
+        loss_total += loss
 
         if args.lambda_critic > 0:
             loss_dan = sum(loss_dan)
@@ -448,14 +511,14 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
             else:
                 mats = [Us, Ps, Ns]
 
-            evaluate(
-                [encoders, encoder_dst],
-                [classifiers, classifier_dst, classifier_mix],
-                mats,
-                [dup_train_loaders, valid_loader],
-                True,
-                args
-            )
+            # evaluate(
+            #             #     [encoders, encoder_dst],
+            #             #     [classifiers, classifier_dst, classifier_mix],
+            #             #     mats,
+            #             #     [dup_train_loaders, valid_loader],
+            #             #     True,
+            #             #     args
+            #             # )
 
             # say("\r" + " " * 50)
             # TODO: print train acc as well
@@ -471,6 +534,10 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
                         # curr_dev,
                         # oracle_curr_dev
                         ))
+
+    writer.add_scalar('training_loss',
+                      loss_total / total,
+                      epoch)
 
     say("\n")
     return iter_cnt
@@ -491,7 +558,7 @@ def compute_oracle(outputs, label, args):
     return oracle
 
 
-def evaluate(encoders, classifiers, mats, loaders, return_best_thrs, args, thr=None):
+def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args, thr=None):
     ''' Evaluate model using MOE
     '''
 
@@ -631,6 +698,14 @@ def evaluate(encoders, classifiers, mats, loaders, return_best_thrs, args, thr=N
         f1s = f1s[~np.isnan(f1s)]
         best_thr = thrs[np.argmax(f1s)]
         print("best threshold={:.4f}, f1={:.4f}".format(best_thr, np.max(f1s)))
+
+        writer.add_scalar('val_loss',
+                          loss,
+                          epoch)
+    else:
+        writer.add_scalar('test_f1',
+                          f1,
+                          epoch)
 
     acc = float(correct) / tot_cnt
     oracle_acc = float(oracle_correct) / tot_cnt
@@ -853,9 +928,9 @@ def train(args):
     say('cuda is available %s\n' % args.cuda)
 
     np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    torch.manual_seed(args.seed + args.seed_delta)
     if args.cuda:
-        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed(args.seed + args.seed_delta)
 
     source_train_sets = args.train.split(',')
     print("sources", source_train_sets)
@@ -1081,7 +1156,7 @@ def train(args):
             [train_loaders, train_loader_dst, unl_loader, valid_loader],
             args,
             optim_model,
-            task_params
+            epoch
         )
 
         # thrs, metrics_val, src_weights_val = evaluate_cross(
@@ -1102,6 +1177,7 @@ def train(args):
         # )
 
         thr, metrics_val = evaluate(
+            epoch,
             [encoders, encoder_dst],
             [classifiers, classifier_dst, classifier_mix],
             mats,
@@ -1111,6 +1187,7 @@ def train(args):
         )
         # say("Dev accuracy/oracle: {:.4f}/{:.4f}\n".format(curr_dev, oracle_curr_dev))
         _, metrics_test = evaluate(
+            epoch,
             [encoders, encoder_dst],
             [classifiers, classifier_dst, classifier_mix],
             mats,
@@ -1148,60 +1225,9 @@ def test_mahalanobis_metric():
     print(d)
 
 
-import argparse
+# import argparse
 
 if __name__ == '__main__':
-    argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
-    argparser.add_argument("--cuda", action="store_true")
-    argparser.add_argument("--train", type=str, default="author,paper,aff",
-                           help="multi-source domains for training, separated with (,)")
-    argparser.add_argument("--test", type=str, default="venue",
-                           help="target domain for testing")
-    argparser.add_argument("--eval_only", action="store_true")
-    argparser.add_argument("--critic", type=str, default="mmd")
-    argparser.add_argument("--batch_size", type=int, default=32)
-    argparser.add_argument("--batch_size_d", type=int, default=32)
-    argparser.add_argument("--max_epoch", type=int, default=50)
-    argparser.add_argument("--lr", type=float, default=1e-4)
-    argparser.add_argument("--lr_d", type=float, default=1e-4)
-    argparser.add_argument("--lambda_critic", type=float, default=0)
-    argparser.add_argument("--lambda_gp", type=float, default=0)
-    argparser.add_argument("--lambda_moe", type=float, default=0)
-    argparser.add_argument("--lambda_mtl", type=float, default=0.3)
-    argparser.add_argument("--lambda_all", type=float, default=1)
-    argparser.add_argument("--m_rank", type=int, default=10)
-    argparser.add_argument("--lambda_entropy", type=float, default=0.0)
-    argparser.add_argument("--load_model", type=str)
-    argparser.add_argument("--save_model", type=str)
-    argparser.add_argument("--metric", type=str, default="biaffine",
-                           help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
-
-    argparser.add_argument('--no-cuda', action='store_true', default=False, help='Disables CUDA training.')
-    argparser.add_argument('--matrix-size1', type=int, default=7, help='Matrix size 1.')
-    argparser.add_argument('--matrix-size2', type=int, default=4, help='Matrix size 2.')
-    argparser.add_argument('--mat1-channel1', type=int, default=8, help='Matrix1 number of channels1.')
-    argparser.add_argument('--mat1-kernel-size1', type=int, default=3, help='Matrix1 kernel size1.')
-    argparser.add_argument('--mat1-channel2', type=int, default=16, help='Matrix1 number of channel2.')
-    argparser.add_argument('--mat1-kernel-size2', type=int, default=2, help='Matrix1 kernel size2.')
-    argparser.add_argument('--mat1-hidden', type=int, default=512, help='Matrix1 hidden dim.')
-    argparser.add_argument('--mat2-channel1', type=int, default=8, help='Matrix2 number of channels1.')
-    argparser.add_argument('--mat2-kernel-size1', type=int, default=2, help='Matrix2 kernel size1.')
-    argparser.add_argument('--mat2-hidden', type=int, default=512, help='Matrix2 hidden dim')
-    argparser.add_argument('--build-index-window', type=int, default=5, help='Matrix2 hidden dim')
-    argparser.add_argument('--seed', type=int, default=42, help='Random seed.')
-
-    argparser.add_argument('--initial-accumulator-value', type=float, default=0.01, help='Initial accumulator value.')
-    argparser.add_argument('--weight-decay', type=float, default=1e-3,
-                           help='Weight decay (L2 loss on parameters).')
-    # argparser.add_argument('--dropout', type=float, default=0.2,
-    #                     help='Dropout rate (1 - keep probability).')
-    argparser.add_argument('--attn-dropout', type=float, default=0.,
-                           help='Dropout rate (1 - keep probability).')
-    argparser.add_argument('--check-point', type=int, default=2, help="Check point")
-    argparser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
-
-    args, _ = argparser.parse_known_args()
-
     random.seed(0)
     torch.manual_seed(0)
     if args.cuda:
@@ -1212,3 +1238,4 @@ if __name__ == '__main__':
         predict(args)
     else:
         train(args)
+    writer.close()
