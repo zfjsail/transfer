@@ -28,9 +28,6 @@ from msda_src.utils.op import softmax
 from dataset import ProcessedCNNInputDataset, OAGDomainDataset
 from models.cnn import CNNMatchModel
 
-from sklearn.metrics import confusion_matrix
-from sklearn.manifold import TSNE
-
 from utils import settings
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
@@ -43,7 +40,7 @@ argparser.add_argument("--eval_only", action="store_true")
 argparser.add_argument("--critic", type=str, default="mmd")
 argparser.add_argument("--batch_size", type=int, default=32)
 argparser.add_argument("--batch_size_d", type=int, default=32)
-argparser.add_argument("--max_epoch", type=int, default=1000)
+argparser.add_argument("--max_epoch", type=int, default=200)
 argparser.add_argument("--lr", type=float, default=1e-4)
 argparser.add_argument("--lr_d", type=float, default=1e-4)
 argparser.add_argument("--lambda_critic", type=float, default=0)
@@ -53,7 +50,7 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
-argparser.add_argument("--metric", type=str, default="biaffine",
+argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
 argparser.add_argument('--no-cuda', action='store_true', default=False, help='Disables CUDA training.')
@@ -472,7 +469,10 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
     y_score = []
     loss = 0.
 
+    alpha_weights = np.zeros(shape=(len(encoders)))
+
     source_ids = range(len(domain_encs))
+    cur_alpha_weights_stack = np.empty(shape=(0, len(domain_encs)))
 
     for batch1, batch2, label in valid_loader:
         if args.cuda:
@@ -510,6 +510,12 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
         # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
         outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
 
+        alpha_cat = torch.zeros(size=(alphas[0].shape[0], len(encoders)))
+        for col, a_list in enumerate(alphas):
+            alpha_cat[:, col] = a_list
+
+        cur_alpha_weights_stack = np.concatenate((cur_alpha_weights_stack, alpha_cat.detach().numpy()))
+
         output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
                       for (alpha, output_i) in zip(alphas, outputs)])
         pred = output.data.max(dim=1)[1]
@@ -540,6 +546,9 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
         # oracle_correct += oracle_eq.sum()
         tot_cnt += output.size(0)
         y_score += output[:, 1].data.tolist()
+
+    alpha_weights = np.mean(cur_alpha_weights_stack, axis=0)
+    print("alpha weights", alpha_weights)
 
     if thr is not None:
         print("using threshold %.4f" % thr)
@@ -817,10 +826,15 @@ def train(args):
     say("Training will begin from scratch\n")
 
     best_dev = 0
-    best_test = 0
+    # best_test = 0
     iter_cnt = 0
+    min_loss_val = None
+    best_test_results = None
+
+    model_dir = os.path.join(settings.OUT_DIR, args.test)
 
     for epoch in range(args.max_epoch):
+        print("training epoch", epoch)
         if args.metric == "biaffine":
             mats = [Us, Ws, Vs]
         else:
@@ -864,9 +878,20 @@ def train(args):
         #     if args.save_model:
         #         say(colored("Save model to {}\n".format(args.save_model + ".best"), 'red'))
         #         torch.save([encoder, classifiers, Us, Ps, Ns], args.save_model + ".best")
+        if min_loss_val is None or min_loss_val > metrics_val[0]:
+            min_loss_val = metrics_val[0]
+            best_test_results = metrics_test
+            # say(colored("Min valid"))
+            torch.save([classifiers, Us, Ps, Ns],
+                       os.path.join(model_dir, "{}_moe_best_now.mdl".format(args.test)))
         say("\n")
 
-    say(colored("Best test accuracy {:.4f}\n".format(best_test), 'red'))
+    # say(colored("Best test accuracy {:.4f}\n".format(best_test), 'red'))
+    say(colored("Min valid loss: {:.4f}, best test results, "
+                "AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}\n".format(
+        min_loss_val, best_test_results[1]*100, best_test_results[2]*100,
+        best_test_results[3]*100, best_test_results[4]*100
+    )))
 
 
 def test_mahalanobis_metric():
