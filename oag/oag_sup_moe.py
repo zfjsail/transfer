@@ -1094,13 +1094,13 @@ def train_cnn_moe_stack(args):
     # clf = LinearSVC().fit(meta_features_train_trans[:, 0:2], meta_labels)
     meta_features_test_trans = scaler.transform(meta_features_test)
     y_pred_test = clf.predict(meta_features_test_trans[:, 0:4])
-    # y_score_test = clf.predict_proba(meta_features_test_trans[:, 0:4])
+    y_score_test = clf.predict_proba(meta_features_test_trans[:, 0:4])
     # print(y_score_test)
 
     prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_test, y_pred_test, average="binary")
     # print("y_score", y_score)
-    # auc = roc_auc_score(meta_labels_test, y_score_test[:, 1])
-    auc = 0
+    auc = roc_auc_score(meta_labels_test, y_score_test[:, 1])
+    # auc = 0
     print("AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}".format(
         auc * 100, prec * 100, rec * 100, f1 * 100))
 

@@ -11,6 +11,10 @@ import numpy as np
 import sklearn
 from torch.utils.data import Dataset
 
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.text import text
+from keras.preprocessing.sequence import pad_sequences
+
 from utils import feature_utils
 from utils import data_utils
 from utils import settings
@@ -250,6 +254,122 @@ class CNNMatchDataset(Dataset):
         return cand_cids
 
 
+class AuthorRNNMatchDataset(Dataset):
+
+    def __init__(self, file_dir, max_seq1_len, max_seq2_len, shuffle, seed, args):
+
+        self.max_seq1_len = max_seq1_len
+        self.max_seq2_len = max_seq2_len
+
+        # load training pairs
+
+        pos_pairs = data_utils.load_json(file_dir, 'pos_person_pairs.json')
+        neg_pairs = data_utils.load_json(file_dir, 'neg_person_pairs.json')
+        pairs = pos_pairs + neg_pairs
+        self.labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
+
+        self.person_dict = data_utils.load_json(file_dir, "ego_person_dict.json")
+
+        corpus = []
+        nn_pos = 0
+        nn_neg = 0
+
+        for i, pair in enumerate(pairs):
+            if i % 100 == 0:
+                logger.info('pairs to matrices %d %d %d', i, nn_pos, nn_neg)
+            # cpaper, npaper = pair
+            aid, mid = pair['aid'], pair['mid']
+            aperson = self.person_dict.get(aid, {})
+            mperson = self.person_dict.get(mid, {})
+            corpus.append(aperson.get("pubs", []))
+            corpus.append(mperson.get("pubs", []))
+
+            corpus.append([item["id"] for item in aperson.get("venue", [])])
+            corpus.append([item["id"] for item in mperson.get("venue", [])])
+
+        t = Tokenizer(num_words=100000)
+        t.fit_on_texts(corpus)
+
+        self.vocab_size = len(t.word_counts)
+        print("vocab size", self.vocab_size)
+        # print("tokenizer", t.word_index)
+
+        self.mag = [self.person_dict.get(pair["mid"], {}).get("pubs", []) for pair in pairs]
+        self.aminer = [self.person_dict.get(pair["aid"], {}).get("pubs", []) for pair in pairs]
+        self.mag = t.texts_to_sequences(self.mag)
+        # print("self mag", self.mag)
+
+        self.aminer = t.texts_to_sequences(self.aminer)
+        self.mag = pad_sequences(self.mag, maxlen=self.max_seq1_len)
+        self.aminer = pad_sequences(self.aminer, maxlen=self.max_seq1_len)
+
+        self.mag_keywords = []
+        self.aminer_keywords = []
+        for i, pair in enumerate(pairs):
+            if i % 100 == 0:
+                logger.info('pairs to matrices %d %d %d', i, nn_pos, nn_neg)
+            # cpaper, npaper = pair
+            aid, mid = pair['aid'], pair['mid']
+            avenue = [item["id"] for item in self.person_dict.get(aid, {}).get("venue", [])]
+            mvenue = [item["id"] for item in self.person_dict.get(mid, {}).get("venue", [])]
+            self.mag_keywords.append(mvenue)
+            self.aminer_keywords.append(avenue)
+
+
+        # self.mag_keywords = [self.person_dict.get(pair["mid"], {}).get("venue", []) for pair in pairs]
+        # self.mag_keywords = [venue["id"] for venue in self.mag_keywords]
+        # self.aminer_keywords = [self.person_dict.get(pair["aid"], {}).get("venue", []) for pair in pairs]
+        # self.aminer_keywords = [venue["id"] for venue in self.aminer_keywords]
+
+        self.mag_keywords = t.texts_to_sequences(self.mag_keywords)
+        self.aminer_keywords = t.texts_to_sequences(self.aminer_keywords)
+
+        self.mag_keywords = pad_sequences(self.mag_keywords, maxlen=max_seq2_len)
+        self.aminer_keywords = pad_sequences(self.aminer_keywords, maxlen=max_seq2_len)
+
+        if shuffle:
+            self.mag, self.aminer, self.mag_keywords, self.aminer_keywords, self.labels = sklearn.utils.shuffle(
+                self.mag, self.aminer, self.mag_keywords, self.aminer_keywords, self.labels,
+                random_state=seed
+            )
+
+        self.N = len(self.labels)
+
+        n_train = args.train_num
+        n_test = args.test_num
+
+        train_data = {}
+        train_data["x1_seq1"] = self.mag[:n_train]
+        train_data["x1_seq2"] = self.mag_keywords[:n_train]
+        train_data["x2_seq1"] = self.aminer[:n_train]
+        train_data["x2_seq2"] = self.aminer_keywords[:n_train]
+        train_data["y"] = self.labels[:n_train]
+        train_data["vocab_size"] = self.vocab_size
+        print("train labels", len(train_data["y"]))
+
+        test_data = {}
+        test_data["x1_seq1"] = self.mag[n_train:(n_train+n_test)]
+        test_data["x1_seq2"] = self.mag_keywords[n_train:(n_train+n_test)]
+        test_data["x2_seq1"] = self.aminer[n_train:(n_train+n_test)]
+        test_data["x2_seq2"] = self.aminer_keywords[n_train:(n_train+n_test)]
+        test_data["y"] = self.labels[n_train:(n_train+n_test)]
+        print("test labels", len(test_data["y"]))
+
+        valid_data = {}
+        valid_data["x1_seq1"] = self.mag[n_train+n_test:(n_train+n_test*2)]
+        valid_data["x1_seq2"] = self.mag_keywords[n_train+n_test:(n_train+n_test*2)]
+        valid_data["x2_seq1"] = self.aminer[n_train+n_test:(n_train+n_test*2)]
+        valid_data["x2_seq2"] = self.aminer_keywords[n_train+n_test:(n_train+n_test*2)]
+        valid_data["y"] = self.labels[n_train+n_test:(n_train+n_test*2)]
+        print("valid labels", len(valid_data["y"]))
+
+        out_dir = join(settings.DATA_DIR, "dom-adpt")
+        os.makedirs(out_dir, exist_ok=True)
+        data_utils.dump_large_obj(train_data, out_dir, "author_rnn_train.pkl")
+        data_utils.dump_large_obj(test_data, out_dir, "author_rnn_test.pkl")
+        data_utils.dump_large_obj(valid_data, out_dir, "author_rnn_valid.pkl")
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--file-dir', type=str, default=settings.AUTHOR_DATA_DIR, help="Input file directory")
@@ -259,8 +379,11 @@ if __name__ == '__main__':
     parser.add_argument('--test-num', type=int, default=200, help='Testing size.')
     parser.add_argument('--seed', type=int, default=42, help='Random seed.')
     parser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
+    parser.add_argument('--max-sequence-length', type=int, default=17,
+                        help="Max sequence length for raw sequences")
+    parser.add_argument('--max-key-sequence-length', type=int, default=8,
+                        help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    dataset = CNNMatchDataset(file_dir=args.file_dir,
-                              matrix_size1=args.matrix_size1,
-                              matrix_size2=args.matrix_size2,
-                              seed=args.seed, shuffle=True, args=args)
+    # dataset = CNNMatchDataset(file_dir=args.file_dir, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, seed=args.seed, shuffle=True, args=args)
+    dataset = AuthorRNNMatchDataset(args.file_dir, args.max_sequence_length,
+                              args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
