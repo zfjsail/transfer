@@ -1053,7 +1053,7 @@ def train(args):
             best_test_results = metrics_test
             # say(colored("Min valid"))
             torch.save([classifiers, Us, Ps, Ns],
-                       os.path.join(model_dir, "{}_moe_best_now.mdl".format(args.test)))
+                       os.path.join(model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
         say("\n")
 
     # say(colored("Best test accuracy {:.4f}\n".format(best_test), 'red'))
