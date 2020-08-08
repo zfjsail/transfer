@@ -29,8 +29,9 @@ from msda_src.utils.io import AmazonDataset, AmazonDomainDataset
 from msda_src.utils.io import say
 from msda_src.utils.op import softmax
 
-from dataset import ProcessedCNNInputDataset, OAGDomainDataset
+from dataset import ProcessedCNNInputDataset, ProcessedRNNInputDataset
 from models.cnn import CNNMatchModel
+from models.rnn import BiLSTM
 
 from utils import settings
 
@@ -54,9 +55,17 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
+argparser.add_argument("--base_model", type=str, default="rnn")
 argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
+argparser.add_argument('--embedding-size', type=int, default=128,
+                    help="Embeding size for LSTM layer")
+argparser.add_argument('--hidden-size', type=int, default=32,
+                    help="Hidden size for LSTM layer")
+argparser.add_argument('--dropout', type=float, default=0.2,
+                    help='Dropout rate (1 - keep probability).')
+argparser.add_argument('--max-vocab-size', type=int, default=100000, help="Maximum of Vocab Size")
 argparser.add_argument('--no-cuda', action='store_true', default=False, help='Disables CUDA training.')
 argparser.add_argument('--matrix-size1', type=int, default=7, help='Matrix size 1.')
 argparser.add_argument('--matrix-size2', type=int, default=4, help='Matrix size 2.')
@@ -79,7 +88,7 @@ argparser.add_argument('--shuffle', action='store_true', default=True, help="Shu
 
 args, _ = argparser.parse_known_args()
 
-writer = SummaryWriter('runs/{}_sup_moe_{}'.format(args.test, args.seed_delta))
+writer = SummaryWriter('runs/{}_sup_base_{}_moe_{}'.format(args.test, args.base_model, args.seed_delta))
 
 
 class HLoss(nn.Module):
@@ -111,18 +120,36 @@ def domain_encoding(loaders, args, encoders):
         ind = 0
         labels = None
         S = []
-        for batch1, batch2, label in loader:
-            if args.cuda:
-                batch1 = Variable(batch1.cuda())
-                batch2 = Variable(batch2.cuda())
-            _, s_out = encoders[load_i](batch1, batch2)
+        if args.base_model == "cnn":
+            for batch1, batch2, label in loader:
+                if args.cuda:
+                    batch1 = Variable(batch1.cuda())
+                    batch2 = Variable(batch2.cuda())
+                _, s_out = encoders[load_i](batch1, batch2)
 
-            S.append(s_out)
-            if ind == 0:
-                labels = label
-            else:
-                labels = torch.cat((labels, label), dim=0)
-            ind += 1
+                S.append(s_out)
+                if ind == 0:
+                    labels = label
+                else:
+                    labels = torch.cat((labels, label), dim=0)
+                ind += 1
+        elif args.base_model == "rnn":
+            for batch1, batch2, batch3, batch4, label in loader:
+                if args.cuda:
+                    batch1 = Variable(batch1.cuda())
+                    batch2 = Variable(batch2.cuda())
+                    batch3 = Variable(batch3.cuda())
+                    batch4 = Variable(batch4.cuda())
+                _, s_out = encoders[load_i](batch1, batch2, batch3, batch4)
+
+                S.append(s_out)
+                if ind == 0:
+                    labels = label
+                else:
+                    labels = torch.cat((labels, label), dim=0)
+                ind += 1
+        else:
+            raise NotImplementedError
 
         S = torch.cat(S, 0)
         neg_index = ((labels == 0).nonzero())
@@ -251,8 +278,14 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
     n_batch = 0
 
     for batches, unl_batch in zip(zip(*train_loaders), train_loader_dst):
-        train_batches1, train_batches2, train_labels = zip(*batches)
-        train_batch1_dst, train_batch2_dst, train_labels_dst = unl_batch
+        if args.base_model == "cnn":
+            train_batches1, train_batches2, train_labels = zip(*batches)
+            train_batch1_dst, train_batch2_dst, train_labels_dst = unl_batch
+        elif args.base_model == "rnn":
+            train_batches1, train_batches2, train_batches3, train_batches4, train_labels = zip(*batches)
+            train_batch1_dst, train_batch2_dst, train_batch3_dst, train_batch4_dst, train_labels_dst = unl_batch
+        else:
+            raise NotImplementedError
 
         iter_cnt += 1
         n_batch += 1
@@ -265,6 +298,12 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
             train_batch2_dst = train_batch2_dst.cuda()
             train_labels_dst = train_labels_dst.cuda()
 
+            if args.base_model == "rnn":
+                train_batches3 = [batch.cuda() for batch in train_batches3]
+                train_batches4 = [batch.cuda() for batch in train_batches4]
+                train_batch3_dst = train_batch3_dst.cuda()
+                train_batch4_dst = train_batch4_dst.cuda()
+
         # train_batches = [Variable(batch) for batch in train_batches]
         # train_labels = [Variable(label) for label in train_labels]
         # unl_critic_batch = Variable(unl_critic_batch)
@@ -272,7 +311,13 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
 
         outputs_dst_transfer = []
         for i in range(len(train_batches1)):
-            _, cur_hidden = encoders[i](train_batch1_dst, train_batch2_dst)
+            if args.base_model == "cnn":
+                _, cur_hidden = encoders[i](train_batch1_dst, train_batch2_dst)
+            elif args.base_model == "rnn":
+                _, cur_hidden = encoders[i](train_batch1_dst, train_batch2_dst, train_batch3_dst, train_batch4_dst)
+            else:
+                raise NotImplementedError
+
             cur_output = classifiers[i](cur_hidden)
             outputs_dst_transfer.append(cur_output)
 
@@ -283,43 +328,64 @@ def train_epoch(iter_cnt, encoders, classifiers, critic, mats, data_loaders, arg
         loss_entropy = []
         # loss_dan = []
 
-        _, hidden_dst = encoder_dst(train_batch1_dst, train_batch2_dst)
+        if args.base_model == "cnn":
+            _, hidden_dst = encoder_dst(train_batch1_dst, train_batch2_dst)
+        elif args.base_model == "rnn":
+            _, hidden_dst = encoder_dst(train_batch1_dst, train_batch2_dst, train_batch3_dst, train_batch4_dst)
+        else:
+            raise NotImplementedError
 
         ms_outputs = []  # (n_sources, n_classifiers)
         hiddens = []
         hidden_corresponding_labels = []
         # labels = []
-        for i, (batch1, batch2, label) in enumerate(zip(train_batches1, train_batches2, train_labels)):
-            _, hidden = encoders[i](batch1, batch2)
-            outputs = []
-            # create output matrix:
-            #     - (i, j) indicates the output of i'th source batch using j'th classifier
-            hiddens.append(hidden)
-            for classifier in classifiers:
-                output = classifier(hidden)
-                outputs.append(output)
-            ms_outputs.append(outputs)
-            hidden_corresponding_labels.append(label)
-            # multi-task loss
-            # loss_mtl.append(mtl_criterion(ms_outputs[i][i], label))
-            # labels.append(label)
+        if args.base_model == "cnn":
+            for i, (batch1, batch2, label) in enumerate(zip(train_batches1, train_batches2, train_labels)):
+                _, hidden = encoders[i](batch1, batch2)
+                outputs = []
+                # create output matrix:
+                #     - (i, j) indicates the output of i'th source batch using j'th classifier
+                hiddens.append(hidden)
+                for classifier in classifiers:
+                    output = classifier(hidden)
+                    outputs.append(output)
+                ms_outputs.append(outputs)
+                hidden_corresponding_labels.append(label)
+                # multi-task loss
+                # loss_mtl.append(mtl_criterion(ms_outputs[i][i], label))
+                # labels.append(label)
 
-            # if args.lambda_critic > 0:
-            #     # critic_batch = torch.cat([batch, unl_critic_batch])
-            #     critic_label = torch.cat([1 - unl_critic_label, unl_critic_label])
-            #     # critic_label = torch.cat([1 - unl_critic_label] * len(train_batches) + [unl_critic_label])
-            #
-            #     if isinstance(critic, ClassificationD):
-            #         critic_output = critic(torch.cat(hidden, encoder(unl_critic_batch)))
-            #         loss_dan.append(critic.compute_loss(critic_output, critic_label))
-            #     else:
-            #         critic_output = critic(hidden, encoder(unl_critic_batch))
-            #         loss_dan.append(critic_output)
-            #
-            #         # critic_output = critic(torch.cat(hiddens), encoder(unl_critic_batch))
-            #         # loss_dan = critic_output
-            # else:
-            #     loss_dan = Variable(torch.FloatTensor([0]))
+                # if args.lambda_critic > 0:
+                #     # critic_batch = torch.cat([batch, unl_critic_batch])
+                #     critic_label = torch.cat([1 - unl_critic_label, unl_critic_label])
+                #     # critic_label = torch.cat([1 - unl_critic_label] * len(train_batches) + [unl_critic_label])
+                #
+                #     if isinstance(critic, ClassificationD):
+                #         critic_output = critic(torch.cat(hidden, encoder(unl_critic_batch)))
+                #         loss_dan.append(critic.compute_loss(critic_output, critic_label))
+                #     else:
+                #         critic_output = critic(hidden, encoder(unl_critic_batch))
+                #         loss_dan.append(critic_output)
+                #
+                #         # critic_output = critic(torch.cat(hiddens), encoder(unl_critic_batch))
+                #         # loss_dan = critic_output
+                # else:
+                #     loss_dan = Variable(torch.FloatTensor([0]))
+        elif args.base_model == "rnn":
+            for i, (batch1, batch2, batch3, batch4, label) in enumerate(zip(
+                    train_batches1, train_batches2, train_batches3, train_batches4, train_labels)):
+                _, hidden = encoders[i](batch1, batch2, batch3, batch4)
+                outputs = []
+                # create output matrix:
+                #     - (i, j) indicates the output of i'th source batch using j'th classifier
+                hiddens.append(hidden)
+                for classifier in classifiers:
+                    output = classifier(hidden)
+                    outputs.append(output)
+                ms_outputs.append(outputs)
+                hidden_corresponding_labels.append(label)
+        else:
+            raise NotImplementedError
 
         # assert (len(outputs) == len(outputs[0]))
         source_ids = range(len(train_batches1))
@@ -478,78 +544,140 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
     source_ids = range(len(domain_encs))
     cur_alpha_weights_stack = np.empty(shape=(0, len(domain_encs)))
 
-    for batch1, batch2, label in valid_loader:
-        if args.cuda:
-            batch1 = batch1.cuda()
-            batch2 = batch2.cuda()
-            label = label.cuda()
+    if args.base_model == "cnn":
+        for batch1, batch2, label in valid_loader:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                label = label.cuda()
 
-        batch1 = Variable(batch1)
-        batch2 = Variable(batch2)
-        bs = len(batch1)
+            batch1 = Variable(batch1)
+            batch2 = Variable(batch2)
+            bs = len(batch1)
 
-        # hidden = encoder(batch)
+            # hidden = encoder(batch)
 
-        _, hidden_dst = encoder_dst(batch1, batch2)
+            _, hidden_dst = encoder_dst(batch1, batch2)
 
-        # source_ids = range(len(domain_encs))
-        if args.metric == "biaffine":
-            alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
-                      for mu in domain_encs]
-        else:
-            alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
-                      for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
-        # alphas = [ (1 - x / sum(alphas)) for x in alphas ]
-        alphas = softmax(alphas)
-        if args.cuda:
-            alphas = [alpha.cuda() for alpha in alphas]
-        alphas = [Variable(alpha) for alpha in alphas]
+            # source_ids = range(len(domain_encs))
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+            # alphas = [ (1 - x / sum(alphas)) for x in alphas ]
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
 
-        outputs_dst_transfer = []
-        for src_i in range(len(source_loaders)):
-            _, cur_hidden = encoders[src_i](batch1, batch2)
-            cur_output = classifiers[src_i](cur_hidden)
-            outputs_dst_transfer.append(cur_output)
+            outputs_dst_transfer = []
+            for src_i in range(len(source_loaders)):
+                _, cur_hidden = encoders[src_i](batch1, batch2)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
 
-        # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
-        outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
 
-        alpha_cat = torch.zeros(size=(alphas[0].shape[0], len(encoders)))
-        for col, a_list in enumerate(alphas):
-            alpha_cat[:, col] = a_list
+            alpha_cat = torch.zeros(size=(alphas[0].shape[0], len(encoders)))
+            for col, a_list in enumerate(alphas):
+                alpha_cat[:, col] = a_list
 
-        cur_alpha_weights_stack = np.concatenate((cur_alpha_weights_stack, alpha_cat.detach().numpy()))
+            cur_alpha_weights_stack = np.concatenate((cur_alpha_weights_stack, alpha_cat.detach().numpy()))
 
-        output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
-                      for (alpha, output_i) in zip(alphas, outputs)])
-        pred = output.data.max(dim=1)[1]
-        # oracle_eq = compute_oracle(outputs, label, args)
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
+            pred = output.data.max(dim=1)[1]
+            # oracle_eq = compute_oracle(outputs, label, args)
 
-        loss_batch = F.nll_loss(torch.log(output), label)
-        loss += bs * loss_batch.item()
+            loss_batch = F.nll_loss(torch.log(output), label)
+            loss += bs * loss_batch.item()
 
-        # if args.eval_only:
-        #     for i in range(batch.shape[0]):
-        #         for j in range(len(alphas)):
-        #             say("{:.4f}: [{:.4f}, {:.4f}], ".format(
-        #                 alphas[j].data[i], outputs[j].data[i][0], outputs[j].data[i][1])
-        #             )
-        #         oracle_TF = "T" if oracle_eq[i] == 1 else colored("F", 'red')
-        #         say("gold: {}, pred: {}, oracle: {}\n".format(label[i], pred[i], oracle_TF))
-        #     say("\n")
-            # print torch.cat(
-            #         [
-            #             torch.cat([ x.unsqueeze(1) for x in alphas ], 1),
-            #             torch.cat([ x for x in outputs ], 1)
-            #         ], 1
-            #     )
+            # if args.eval_only:
+            #     for i in range(batch.shape[0]):
+            #         for j in range(len(alphas)):
+            #             say("{:.4f}: [{:.4f}, {:.4f}], ".format(
+            #                 alphas[j].data[i], outputs[j].data[i][0], outputs[j].data[i][1])
+            #             )
+            #         oracle_TF = "T" if oracle_eq[i] == 1 else colored("F", 'red')
+            #         say("gold: {}, pred: {}, oracle: {}\n".format(label[i], pred[i], oracle_TF))
+            #     say("\n")
+                # print torch.cat(
+                #         [
+                #             torch.cat([ x.unsqueeze(1) for x in alphas ], 1),
+                #             torch.cat([ x for x in outputs ], 1)
+                #         ], 1
+                #     )
 
-        y_true += label.tolist()
-        y_pred += pred.tolist()
-        correct += pred.eq(label).sum()
-        # oracle_correct += oracle_eq.sum()
-        tot_cnt += output.size(0)
-        y_score += output[:, 1].data.tolist()
+            y_true += label.tolist()
+            y_pred += pred.tolist()
+            correct += pred.eq(label).sum()
+            # oracle_correct += oracle_eq.sum()
+            tot_cnt += output.size(0)
+            y_score += output[:, 1].data.tolist()
+    elif args.base_model == "rnn":
+        for batch1, batch2, batch3, batch4, label in valid_loader:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                batch3 = batch3.cuda()
+                batch4 = batch4.cuda()
+                label = label.cuda()
+
+            # batch1 = Variable(batch1)
+            # batch2 = Variable(batch2)
+            bs = len(batch1)
+
+            # hidden = encoder(batch)
+
+            _, hidden_dst = encoder_dst(batch1, batch2, batch3, batch4)
+
+            # source_ids = range(len(domain_encs))
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+            # alphas = [ (1 - x / sum(alphas)) for x in alphas ]
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
+
+            outputs_dst_transfer = []
+            for src_i in range(len(source_loaders)):
+                _, cur_hidden = encoders[src_i](batch1, batch2, batch3, batch4)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
+
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+
+            alpha_cat = torch.zeros(size=(alphas[0].shape[0], len(encoders)))
+            for col, a_list in enumerate(alphas):
+                alpha_cat[:, col] = a_list
+
+            cur_alpha_weights_stack = np.concatenate((cur_alpha_weights_stack, alpha_cat.detach().numpy()))
+
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
+            pred = output.data.max(dim=1)[1]
+            # oracle_eq = compute_oracle(outputs, label, args)
+
+            loss_batch = F.nll_loss(torch.log(output), label)
+            loss += bs * loss_batch.item()
+
+            y_true += label.tolist()
+            y_pred += pred.tolist()
+            correct += pred.eq(label).sum()
+            # oracle_correct += oracle_eq.sum()
+            tot_cnt += output.size(0)
+            y_score += output[:, 1].data.tolist()
+    else:
+        raise NotImplementedError
 
     alpha_weights = np.mean(cur_alpha_weights_stack, axis=0)
     print("alpha weights", alpha_weights)
@@ -670,28 +798,44 @@ def train(args):
     for src_i in range(len(source_train_sets)):
         cur_model_dir = os.path.join(settings.OUT_DIR, source_train_sets[src_i])
 
-        encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
+        if args.base_model == "cnn":
+            encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
                                       mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
                                       mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
                                       mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                       mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
-        if args.cuda:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "cnn-match-best-now.mdl")))
+        elif args.base_model == "rnn":
+            encoder_class = BiLSTM(vocab_size=args.max_vocab_size,
+                   embedding_size=args.embedding_size,
+                   hidden_size=args.hidden_size,
+                   dropout=args.dropout)
         else:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "cnn-match-best-now.mdl"), map_location=torch.device('cpu')))
+            raise NotImplementedError
+        if args.cuda:
+            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
+        else:
+            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
 
         encoders_src.append(encoder_class)
 
     dst_pretrain_dir = os.path.join(settings.OUT_DIR, args.test)
-    encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
+    if args.base_model == "cnn":
+        encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
                                          mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
                                          mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
-    if args.cuda:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "cnn-match-best-now.mdl")))
+    elif args.base_model == "rnn":
+        encoder_dst_pretrain = BiLSTM(vocab_size=args.max_vocab_size,
+                   embedding_size=args.embedding_size,
+                   hidden_size=args.hidden_size,
+                   dropout=args.dropout)
     else:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "cnn-match-best-now.mdl"), map_location=torch.device('cpu')))
+        raise NotImplementedError
+    if args.cuda:
+        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model))))
+    else:
+        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
 
     critic_class = get_critic_class(args.critic)
     critic_class.add_config(argparser)
@@ -712,7 +856,12 @@ def train(args):
     Vs = []
     # Ms = []
     for source in source_train_sets:
-        train_dataset = ProcessedCNNInputDataset(source, "train")
+        if args.base_model == "cnn":
+            train_dataset = ProcessedCNNInputDataset(source, "train")
+        elif args.base_model == "rnn":
+            train_dataset = ProcessedRNNInputDataset(source, "train")
+        else:
+            raise NotImplementedError
         train_loader = data.DataLoader(
             train_dataset,
             batch_size=args.batch_size,
@@ -752,7 +901,17 @@ def train(args):
     #     num_workers=0
     # )
 
-    train_dataset_dst = ProcessedCNNInputDataset(args.test, "train")
+    if args.base_model == "cnn":
+        train_dataset_dst = ProcessedCNNInputDataset(args.test, "train")
+        valid_dataset = ProcessedCNNInputDataset(args.test, "valid")
+        test_dataset = ProcessedCNNInputDataset(args.test, "test")
+
+    elif args.base_model == "rnn":
+        train_dataset_dst = ProcessedRNNInputDataset(args.test, "train")
+        valid_dataset = ProcessedRNNInputDataset(args.test, "valid")
+        test_dataset = ProcessedRNNInputDataset(args.test, "test")
+    else:
+        raise NotImplementedError
     train_loader_dst = data.DataLoader(
         train_dataset_dst,
         batch_size=args.batch_size,
@@ -760,7 +919,6 @@ def train(args):
         num_workers=0
     )
 
-    valid_dataset = ProcessedCNNInputDataset(args.test, "valid")
     valid_loader = data.DataLoader(
         valid_dataset,
         batch_size=args.batch_size,
@@ -768,7 +926,6 @@ def train(args):
         num_workers=0
     )
 
-    test_dataset = ProcessedCNNInputDataset(args.test, "test")
     test_loader = data.DataLoader(
         test_dataset,
         batch_size=args.batch_size,
@@ -821,11 +978,20 @@ def train(args):
         task_params += Ws
         task_params += Vs
 
-    optim_model = optim.Adagrad(
-        filter(requires_grad, task_params),
-        lr=args.lr,
-        weight_decay=1e-4
-    )
+    if args.base_model == "cnn":
+        optim_model = optim.Adagrad(
+            filter(requires_grad, task_params),
+            lr=args.lr,
+            weight_decay=1e-4
+        )
+    elif args.base_model == "rnn":
+        optim_model = optim.Adam(
+            filter(requires_grad, task_params),
+            lr=args.lr,
+            weight_decay=1e-4
+        )
+    else:
+        raise NotImplementedError
 
     say("Training will begin from scratch\n")
 
@@ -1104,7 +1270,7 @@ def train_cnn_moe_stack(args):
     print("AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}".format(
         auc * 100, prec * 100, rec * 100, f1 * 100))
 
-if __name__ == '__main__':
 
-    # train(args)
-    train_cnn_moe_stack(args)
+if __name__ == '__main__':
+    train(args)
+    # train_cnn_moe_stack(args)

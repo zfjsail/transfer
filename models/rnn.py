@@ -9,6 +9,8 @@ class BiLSTM(nn.Module):
         self.vocab_size = vocab_size
         # self.msl = max_sequence_length
         self.multiple = multiple
+        self.n_d = 192
+        self.n_out = 192
 
         # embedding layer
         self.embed_seq = nn.Embedding(self.vocab_size + 1, embedding_size)
