@@ -700,7 +700,7 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
         loss, auc * 100, prec * 100, rec * 100, f1 * 100))
 
     best_thr = None
-    metric = [auc, prec, rec, f1]
+    metric = [loss, auc, prec, rec, f1]
 
     if return_best_thrs:
         precs, recs, thrs = precision_recall_curve(y_true, y_score)
@@ -947,6 +947,9 @@ def train(args):
     #     say(colored("Save model to {}\n".format(args.save_model + ".init"), 'red'))
     #     torch.save([encoder, classifiers, Us, Ps, Ns], args.save_model + ".init")
 
+    save_model_dir = os.path.join(settings.OUT_DIR, args.test)
+    classifiers, Us, Ps, Ns = torch.load(os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
+
     if args.cuda:
         map(lambda m: m.cuda(), [critic, encoder_dst_pretrain] + classifiers + encoders_src)
         Us = [Variable(U.cuda(), requires_grad=True) for U in Us]
@@ -1003,6 +1006,32 @@ def train(args):
 
     model_dir = os.path.join(settings.OUT_DIR, args.test)
 
+    # if args.metric == "biaffine":
+    #     mats = [Us, Ws, Vs]
+    # else:
+    #     mats = [Us, Ps, Ns]
+    #
+    # thr, metrics_val = evaluate(
+    #     0,
+    #     [encoders_src, encoder_dst_pretrain], classifiers,
+    #     mats,
+    #     [train_loaders, valid_loader],
+    #     True,
+    #     args
+    # )
+    # # say("Dev accuracy/oracle: {:.4f}/{:.4f}\n".format(curr_dev, oracle_curr_dev))
+    # _, metrics_test = evaluate(
+    #     0,
+    #     [encoders_src, encoder_dst_pretrain], classifiers,
+    #     mats,
+    #     [train_loaders, test_loader],
+    #     False,
+    #     args,
+    #     thr=thr
+    # )
+    #
+    # raise
+
     for epoch in range(args.max_epoch):
         print("training epoch", epoch)
         if args.metric == "biaffine":
@@ -1049,6 +1078,7 @@ def train(args):
         #         say(colored("Save model to {}\n".format(args.save_model + ".best"), 'red'))
         #         torch.save([encoder, classifiers, Us, Ps, Ns], args.save_model + ".best")
         if min_loss_val is None or min_loss_val > metrics_val[0]:
+            print("change val loss from {} to {}".format(min_loss_val, metrics_val[0]))
             min_loss_val = metrics_val[0]
             best_test_results = metrics_test
             # say(colored("Min valid"))
@@ -1079,9 +1109,11 @@ def test_mahalanobis_metric():
     print(d)
 
 
-def train_cnn_moe_stack(args):
+def train_moe_stack(args):
     save_model_dir = os.path.join(settings.OUT_DIR, args.test)
-    classifiers, Us, Ps, Ns = torch.load(os.path.join(save_model_dir, "{}_moe_best_now.mdl".format(args.test)))
+    classifiers, Us, Ps, Ns = torch.load(os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
+    print("base model", args.base_model)
+    print("classifier", classifiers[0])
 
     source_train_sets = args.train.split(',')
 
@@ -1089,28 +1121,44 @@ def train_cnn_moe_stack(args):
     for src_i in range(len(source_train_sets)):
         cur_model_dir = os.path.join(settings.OUT_DIR, source_train_sets[src_i])
 
-        encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
+        if args.base_model == "cnn":
+            encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
                                       mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
                                       mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
                                       mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                       mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
-        if args.cuda:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "cnn-match-best-now.mdl")))
+        elif args.base_model == "rnn":
+            encoder_class = BiLSTM(vocab_size=args.max_vocab_size,
+                   embedding_size=args.embedding_size,
+                   hidden_size=args.hidden_size,
+                   dropout=args.dropout)
         else:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "cnn-match-best-now.mdl"), map_location=torch.device('cpu')))
+            raise NotImplementedError
+        if args.cuda:
+            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
+        else:
+            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
 
         encoders_src.append(encoder_class)
 
     dst_pretrain_dir = os.path.join(settings.OUT_DIR, args.test)
-    encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
+    if args.base_model == "cnn":
+        encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
                                          mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
                                          mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
-    if args.cuda:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "cnn-match-best-now.mdl")))
+    elif args.base_model == "rnn":
+        encoder_dst_pretrain = BiLSTM(vocab_size=args.max_vocab_size,
+                   embedding_size=args.embedding_size,
+                   hidden_size=args.hidden_size,
+                   dropout=args.dropout)
     else:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "cnn-match-best-now.mdl"), map_location=torch.device('cpu')))
+        raise NotImplementedError
+    if args.cuda:
+        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model))))
+    else:
+        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
 
     map(lambda m: m.eval(), encoders_src + classifiers + [encoder_dst_pretrain])
 
@@ -1122,7 +1170,12 @@ def train_cnn_moe_stack(args):
 
     train_loaders = []
     for source in source_train_sets:
-        train_dataset = ProcessedCNNInputDataset(source, "train")
+        if args.base_model == "cnn":
+            train_dataset = ProcessedCNNInputDataset(source, "train")
+        elif args.base_model == "rnn":
+            train_dataset = ProcessedRNNInputDataset(source, "train")
+        else:
+            raise NotImplementedError
         train_loader = data.DataLoader(
             train_dataset,
             batch_size=args.batch_size,
@@ -1130,7 +1183,18 @@ def train_cnn_moe_stack(args):
             num_workers=0
         )
         train_loaders.append(train_loader)
-    train_dataset_dst = ProcessedCNNInputDataset(args.test, "train")
+
+    if args.base_model == "cnn":
+        train_dataset_dst = ProcessedCNNInputDataset(args.test, "train")
+        valid_dataset = ProcessedCNNInputDataset(args.test, "valid")
+        test_dataset = ProcessedCNNInputDataset(args.test, "test")
+    elif args.base_model == "rnn":
+        train_dataset_dst = ProcessedRNNInputDataset(args.test, "train")
+        valid_dataset = ProcessedRNNInputDataset(args.test, "valid")
+        test_dataset = ProcessedRNNInputDataset(args.test, "test")
+    else:
+        raise NotImplementedError
+
     train_loader_dst = data.DataLoader(
         train_dataset_dst,
         batch_size=args.batch_size,
@@ -1138,7 +1202,6 @@ def train_cnn_moe_stack(args):
         num_workers=0
     )
 
-    valid_dataset = ProcessedCNNInputDataset(args.test, "valid")
     valid_loader = data.DataLoader(
         valid_dataset,
         batch_size=args.batch_size,
@@ -1146,7 +1209,6 @@ def train_cnn_moe_stack(args):
         num_workers=0
     )
 
-    test_dataset = ProcessedCNNInputDataset(args.test, "test")
     test_loader = data.DataLoader(
         test_dataset,
         batch_size=args.batch_size,
@@ -1160,107 +1222,204 @@ def train_cnn_moe_stack(args):
     meta_features = np.empty(shape=(0, 4))
     meta_labels = []
 
-    for batch1, batch2, label in train_loader_dst:
-        if args.cuda:
-            batch1 = batch1.cuda()
-            batch2 = batch2.cuda()
-            label = label.cuda()
+    if args.base_model == "cnn":
+        for batch1, batch2, label in train_loader_dst:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                label = label.cuda()
 
-        _, hidden_dst = encoder_dst_pretrain(batch1, batch2)
-        out_dst_cnn = encoder_dst_pretrain.fc_out(hidden_dst)
-        # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+            _, hidden_dst = encoder_dst_pretrain(batch1, batch2)
+            out_dst_cnn = encoder_dst_pretrain.fc_out(hidden_dst)
+            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
 
-        if args.metric == "biaffine":
-            alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
-                      for mu in domain_encs]
-        else:
-            alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
-                      for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
 
-        alphas = softmax(alphas)
-        if args.cuda:
-            alphas = [alpha.cuda() for alpha in alphas]
-        alphas = [Variable(alpha) for alpha in alphas]
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
 
-        outputs_dst_transfer = []
-        for src_i in range(len(train_loaders)):
-            _, cur_hidden = encoders_src[src_i](batch1, batch2)
-            cur_output = classifiers[src_i](cur_hidden)
-            outputs_dst_transfer.append(cur_output)
+            outputs_dst_transfer = []
+            for src_i in range(len(train_loaders)):
+                _, cur_hidden = encoders_src[src_i](batch1, batch2)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
 
-        # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
-        outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
 
-        output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
-                      for (alpha, output_i) in zip(alphas, outputs)])
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
 
-        if args.cuda:
-            output = output.cpu()
-            out_dst_cnn = out_dst_cnn.cpu()
-            label = label.cpu()
-        cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
-        meta_features = np.concatenate((meta_features, cur_feature), axis=0)
-        meta_labels += label.data.tolist()
+            if args.cuda:
+                output = output.cpu()
+                out_dst_cnn = out_dst_cnn.cpu()
+                label = label.cpu()
+            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            meta_features = np.concatenate((meta_features, cur_feature), axis=0)
+            meta_labels += label.data.tolist()
 
-    print("meta features", meta_features)
-    print("meta labels", meta_labels)
+        # print("meta features", meta_features)
+        # print("meta labels", meta_labels)
 
-    meta_features_test = np.empty(shape=(0, 4))
-    meta_labels_test = []
+        meta_features_test = np.empty(shape=(0, 4))
+        meta_labels_test = []
 
-    for batch1, batch2, label in test_loader:
-        if args.cuda:
-            batch1 = batch1.cuda()
-            batch2 = batch2.cuda()
-            label = label.cuda()
+        for batch1, batch2, label in test_loader:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                label = label.cuda()
 
-        _, hidden_dst = encoder_dst_pretrain(batch1, batch2)
-        out_dst_cnn = encoder_dst_pretrain.fc_out(hidden_dst)
-        # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+            _, hidden_dst = encoder_dst_pretrain(batch1, batch2)
+            out_dst_cnn = encoder_dst_pretrain.fc_out(hidden_dst)
+            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
 
-        if args.metric == "biaffine":
-            alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
-                      for mu in domain_encs]
-        else:
-            alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
-                      for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
 
-        alphas = softmax(alphas)
-        if args.cuda:
-            alphas = [alpha.cuda() for alpha in alphas]
-        alphas = [Variable(alpha) for alpha in alphas]
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
 
-        outputs_dst_transfer = []
-        for src_i in range(len(train_loaders)):
-            _, cur_hidden = encoders_src[src_i](batch1, batch2)
-            cur_output = classifiers[src_i](cur_hidden)
-            outputs_dst_transfer.append(cur_output)
+            outputs_dst_transfer = []
+            for src_i in range(len(train_loaders)):
+                _, cur_hidden = encoders_src[src_i](batch1, batch2)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
 
-        # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
-        outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
 
-        output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
-                      for (alpha, output_i) in zip(alphas, outputs)])
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
 
-        if args.cuda:
-            output = output.cpu()
-            out_dst_cnn = out_dst_cnn.cpu()
-            label = label.cpu()
-        cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
-        meta_features_test = np.concatenate((meta_features_test, cur_feature), axis=0)
-        meta_labels_test += label.data.tolist()
+            if args.cuda:
+                output = output.cpu()
+                out_dst_cnn = out_dst_cnn.cpu()
+                label = label.cpu()
+            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            meta_features_test = np.concatenate((meta_features_test, cur_feature), axis=0)
+            meta_labels_test += label.data.tolist()
+    elif args.base_model == "rnn":
+        for batch1, batch2, batch3, batch4, label in train_loader_dst:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                batch3 = batch3.cuda()
+                batch4 = batch4.cuda()
+                label = label.cuda()
+
+            _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
+            out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
+            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
+
+            outputs_dst_transfer = []
+            for src_i in range(len(train_loaders)):
+                _, cur_hidden = encoders_src[src_i](batch1, batch2, batch3, batch4)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
+
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
+
+            if args.cuda:
+                output = output.cpu()
+                out_dst_cnn = out_dst_cnn.cpu()
+                label = label.cpu()
+            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            meta_features = np.concatenate((meta_features, cur_feature), axis=0)
+            meta_labels += label.data.tolist()
+
+        # print("meta features", meta_features)
+        # print("meta labels", meta_labels)
+
+        meta_features_test = np.empty(shape=(0, 4))
+        meta_labels_test = []
+
+        for batch1, batch2, batch3, batch4, label in test_loader:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                batch3 = batch3.cuda()
+                batch4 = batch4.cuda()
+                label = label.cuda()
+
+            _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
+            out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
+            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
+
+            outputs_dst_transfer = []
+            for src_i in range(len(train_loaders)):
+                _, cur_hidden = encoders_src[src_i](batch1, batch2, batch3, batch4)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
+
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
+
+            if args.cuda:
+                output = output.cpu()
+                out_dst_cnn = out_dst_cnn.cpu()
+                label = label.cpu()
+            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            meta_features_test = np.concatenate((meta_features_test, cur_feature), axis=0)
+            meta_labels_test += label.data.tolist()
 
     scaler = StandardScaler()
+    print("meta features", meta_features)
     meta_features_train_trans = scaler.fit_transform(meta_features)
-    # clf = LogisticRegression(C=0.01, solver="saga").fit(meta_features_train_trans[:, 0:4], meta_labels)
+    print("meta features trans", meta_features_train_trans)
+    # clf = LogisticRegression(C=0.01, solver="saga").fit(meta_features_train_trans[:, 2:4], meta_labels)
     # print(clf.coef_)
-    clf = SVC(kernel="linear", C=0.002, probability=True).fit(meta_features_train_trans[:, 0:4], meta_labels)
+    # clf = SVC(kernel="linear", C=0.002, probability=True).fit(meta_features_train_trans[:, 2:4], meta_labels)
     # clf = RandomForestClassifier(max_depth=3, n_estimators=10).fit(meta_features_train_trans[:, 2:4], meta_labels)
-    # clf = SVC(gamma=2, C=0.1, probability=True).fit(meta_features_train_trans[:, 0:4], meta_labels)
+    clf = SVC(gamma=2, C=0.1, probability=True).fit(meta_features_train_trans[:, 2:4], meta_labels)
     # clf = LinearSVC().fit(meta_features_train_trans[:, 0:2], meta_labels)
     meta_features_test_trans = scaler.transform(meta_features_test)
-    y_pred_test = clf.predict(meta_features_test_trans[:, 0:4])
-    y_score_test = clf.predict_proba(meta_features_test_trans[:, 0:4])
+    y_pred_test = clf.predict(meta_features_test_trans[:, 2:4])
+    y_score_test = clf.predict_proba(meta_features_test_trans[:, 2:4])
     # print(y_score_test)
 
     prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_test, y_pred_test, average="binary")
@@ -1273,4 +1432,4 @@ def train_cnn_moe_stack(args):
 
 if __name__ == '__main__':
     train(args)
-    # train_cnn_moe_stack(args)
+    # train_moe_stack(args)
