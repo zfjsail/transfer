@@ -6,6 +6,7 @@ from copy import copy, deepcopy
 from termcolor import colored, cprint
 from copy import deepcopy
 import numpy as np
+import xgboost as xgb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,6 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC, LinearSVC
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import AdaBoostClassifier
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import precision_recall_curve
@@ -37,6 +39,7 @@ from models.rnn import BiLSTM
 from utils import settings
 
 import warnings
+
 warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
@@ -64,11 +67,11 @@ argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
 argparser.add_argument('--embedding-size', type=int, default=128,
-                    help="Embeding size for LSTM layer")
+                       help="Embeding size for LSTM layer")
 argparser.add_argument('--hidden-size', type=int, default=32,
-                    help="Hidden size for LSTM layer")
+                       help="Hidden size for LSTM layer")
 argparser.add_argument('--dropout', type=float, default=0.2,
-                    help='Dropout rate (1 - keep probability).')
+                       help='Dropout rate (1 - keep probability).')
 argparser.add_argument('--max-vocab-size', type=int, default=100000, help="Maximum of Vocab Size")
 argparser.add_argument('--no-cuda', action='store_true', default=False, help='Disables CUDA training.')
 argparser.add_argument('--matrix-size1', type=int, default=7, help='Matrix size 1.')
@@ -608,12 +611,12 @@ def evaluate(epoch, encoders, classifiers, mats, loaders, return_best_thrs, args
             #         oracle_TF = "T" if oracle_eq[i] == 1 else colored("F", 'red')
             #         say("gold: {}, pred: {}, oracle: {}\n".format(label[i], pred[i], oracle_TF))
             #     say("\n")
-                # print torch.cat(
-                #         [
-                #             torch.cat([ x.unsqueeze(1) for x in alphas ], 1),
-                #             torch.cat([ x for x in outputs ], 1)
-                #         ], 1
-                #     )
+            # print torch.cat(
+            #         [
+            #             torch.cat([ x.unsqueeze(1) for x in alphas ], 1),
+            #             torch.cat([ x for x in outputs ], 1)
+            #         ], 1
+            #     )
 
             y_true += label.tolist()
             y_pred += pred.tolist()
@@ -806,44 +809,50 @@ def train(args):
 
         if args.base_model == "cnn":
             encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
-                                      mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
-                                      mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
-                                      mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
-                                      mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
+                                          mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
+                                          mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
+                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
+                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
         elif args.base_model == "rnn":
             encoder_class = BiLSTM(pretrain_emb=pretrain_emb,
-                vocab_size=args.max_vocab_size,
-                   embedding_size=args.embedding_size,
-                   hidden_size=args.hidden_size,
-                   dropout=args.dropout)
+                                   vocab_size=args.max_vocab_size,
+                                   embedding_size=args.embedding_size,
+                                   hidden_size=args.hidden_size,
+                                   dropout=args.dropout)
         else:
             raise NotImplementedError
         if args.cuda:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
+            encoder_class.load_state_dict(
+                torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
         else:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
+            encoder_class.load_state_dict(
+                torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)),
+                           map_location=torch.device('cpu')))
 
         encoders_src.append(encoder_class)
 
     dst_pretrain_dir = os.path.join(settings.OUT_DIR, args.test)
     if args.base_model == "cnn":
         encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
-                                         mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
-                                         mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
-                                         mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
-                                         mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
+                                             mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
+                                             mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
+                                             mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
+                                             mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
     elif args.base_model == "rnn":
         encoder_dst_pretrain = BiLSTM(pretrain_emb=pretrain_emb,
-            vocab_size=args.max_vocab_size,
-                   embedding_size=args.embedding_size,
-                   hidden_size=args.hidden_size,
-                   dropout=args.dropout)
+                                      vocab_size=args.max_vocab_size,
+                                      embedding_size=args.embedding_size,
+                                      hidden_size=args.hidden_size,
+                                      dropout=args.dropout)
     else:
         raise NotImplementedError
     if args.cuda:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model))))
+        encoder_dst_pretrain.load_state_dict(
+            torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model))))
     else:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
+        encoder_dst_pretrain.load_state_dict(
+            torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model)),
+                       map_location=torch.device('cpu')))
 
     critic_class = get_critic_class(args.critic)
     critic_class.add_config(argparser)
@@ -1086,7 +1095,7 @@ def train(args):
         )
         # say("Test accuracy/oracle: {:.4f}/{:.4f}\n".format(curr_test, oracle_curr_test))
 
-        #TODO
+        # TODO
         # if curr_dev >= best_dev:
         #     best_dev = curr_dev
         #     best_test = curr_test
@@ -1106,8 +1115,8 @@ def train(args):
     # say(colored("Best test accuracy {:.4f}\n".format(best_test), 'red'))
     say(colored("Min valid loss: {:.4f}, best test results, "
                 "AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}\n".format(
-        min_loss_val, best_test_results[1]*100, best_test_results[2]*100,
-        best_test_results[3]*100, best_test_results[4]*100
+        min_loss_val, best_test_results[1] * 100, best_test_results[2] * 100,
+                      best_test_results[3] * 100, best_test_results[4] * 100
     )))
 
 
@@ -1126,9 +1135,142 @@ def test_mahalanobis_metric():
     print(d)
 
 
+class SimpleMLP(nn.Module):
+
+    def __init__(self):
+        super(SimpleMLP, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(192 + 2*8, 64),
+            nn.ReLU(),
+            nn.Linear(64, 16),
+            nn.ReLU(),
+            nn.Linear(16, 2)
+        )
+
+    def forward(self, meta_x):
+        out = self.fc(meta_x)
+        return torch.log_softmax(out, dim=1)
+
+
+from torch.utils.data import Dataset
+
+
+class SimpleDataset(Dataset):
+
+    def __init__(self, x, y):
+        x = np.array(x, dtype="float32")
+        y = np.array(y, dtype=int)
+        self.x = torch.from_numpy(x)
+        self.y = torch.from_numpy(y)
+
+        self.N = len(self.y)
+
+    def __len__(self):
+        return self.N
+
+    def __getitem__(self, item):
+        return self.x[item], self.y[item]
+
+
+def meta_evaluate(epoch, loader, model, thr=None, return_best_thr=False, args=args):
+    model.eval()
+    total = 0.
+    loss = 0.
+    y_true, y_pred, y_score = [], [], []
+
+    for ibatch, batch in enumerate(loader):
+        labels = batch[-1]
+        x = batch[0]
+        bs = len(labels)
+
+        if args.cuda:
+            x = x.cuda()
+            labels = labels.cuda()
+        output = model(x)
+        # loss_batch = F.binary_cross_entropy(output.squeeze(), labels)
+        loss_batch = F.nll_loss(output, labels)
+        loss += bs * loss_batch.item()
+        y_true += labels.data.tolist()
+        y_pred += output.max(1)[1].data.tolist()
+
+        y_score += output[:, 1].data.tolist()
+
+        total += len(labels)
+
+    model.train()
+
+    if thr is not None:
+        print("using threshold %.4f" % thr)
+        y_score = np.array(y_score)
+        y_pred = np.zeros_like(y_score)
+        y_pred[y_score > thr] = 1
+    else:
+        # print("y_score", y_score)
+        pass
+
+    prec, rec, f1, _ = precision_recall_fscore_support(y_true, y_pred, average="binary")
+
+    auc = roc_auc_score(y_true, y_score)
+    # vloss = F.binary_cross_entropy(torch.FloatTensor(y_score), torch.FloatTensor(y_true))
+    print("loss: {:.4f} AUC: {:.4f} Prec: {:.4f} Rec: {:.4f} F1: {:.4f}".format(
+                loss/total, auc, prec, rec, f1))
+
+    if return_best_thr:  # valid
+        precs, recs, thrs = precision_recall_curve(y_true, y_score)
+        f1s = 2 * precs * recs / (precs + recs)
+        f1s = f1s[:-1]
+        thrs = thrs[~np.isnan(f1s)]
+        f1s = f1s[~np.isnan(f1s)]
+        best_thr = thrs[np.argmax(f1s)]
+        print("best threshold={:.4f}, f1={:.4f}".format(best_thr, np.max(f1s)))
+
+        return best_thr, [loss / total, auc, prec, rec, f1]
+    else:
+        return None, [loss / total, auc, prec, rec, f1]
+
+
+def meta_train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args=args):
+    model.train()
+
+    loss = 0.
+    total = 0.
+
+    for i_batch, batch in enumerate(train_loader):
+        # print("batch", batch)
+        bs = batch[-1].shape[0]
+        x = batch[0]
+        labels = batch[-1]
+        if args.cuda:
+            x = x.cuda()
+            labels = labels.cuda()
+
+        optimizer.zero_grad()
+        output = model(x)
+
+        # print("output", output)
+        # print("labels", labels)
+        loss_train = F.nll_loss(output, labels)
+        loss += bs * loss_train.item()
+        total += bs
+        loss_train.backward()
+        optimizer.step()
+    print("train loss epoch", epoch, loss / total)
+
+    metrics_val = None
+    metrics_test = None
+    if (epoch + 1) % args.check_point == 0:
+        print("epoch {}, checkpoint! validation...".format(epoch))
+        best_thr, metrics_val = meta_evaluate(epoch, valid_loader, model, return_best_thr=True, args=args)
+        print('eval on test data!...')
+        _, metrics_test = meta_evaluate(epoch, test_loader, model, thr=best_thr, args=args)
+
+    return metrics_val, metrics_test
+
+
 def train_moe_stack(args):
     save_model_dir = os.path.join(settings.OUT_DIR, args.test)
-    classifiers, Us, Ps, Ns = torch.load(os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
+    classifiers, Us, Ps, Ns = torch.load(
+        os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
     print("base model", args.base_model)
     print("classifier", classifiers[0])
 
@@ -1141,44 +1283,50 @@ def train_moe_stack(args):
 
         if args.base_model == "cnn":
             encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
-                                      mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
-                                      mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
-                                      mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
-                                      mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
+                                          mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
+                                          mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
+                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
+                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
         elif args.base_model == "rnn":
             encoder_class = BiLSTM(pretrain_emb=pretrain_emb,
-                vocab_size=args.max_vocab_size,
-                   embedding_size=args.embedding_size,
-                   hidden_size=args.hidden_size,
-                   dropout=args.dropout)
+                                   vocab_size=args.max_vocab_size,
+                                   embedding_size=args.embedding_size,
+                                   hidden_size=args.hidden_size,
+                                   dropout=args.dropout)
         else:
             raise NotImplementedError
         if args.cuda:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
+            encoder_class.load_state_dict(
+                torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
         else:
-            encoder_class.load_state_dict(torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
+            encoder_class.load_state_dict(
+                torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)),
+                           map_location=torch.device('cpu')))
 
         encoders_src.append(encoder_class)
 
     dst_pretrain_dir = os.path.join(settings.OUT_DIR, args.test)
     if args.base_model == "cnn":
         encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
-                                         mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
-                                         mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
-                                         mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
-                                         mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
+                                             mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
+                                             mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
+                                             mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
+                                             mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
     elif args.base_model == "rnn":
         encoder_dst_pretrain = BiLSTM(pretrain_emb=pretrain_emb,
-            vocab_size=args.max_vocab_size,
-                   embedding_size=args.embedding_size,
-                   hidden_size=args.hidden_size,
-                   dropout=args.dropout)
+                                      vocab_size=args.max_vocab_size,
+                                      embedding_size=args.embedding_size,
+                                      hidden_size=args.hidden_size,
+                                      dropout=args.dropout)
     else:
         raise NotImplementedError
     if args.cuda:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model))))
+        encoder_dst_pretrain.load_state_dict(
+            torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model))))
     else:
-        encoder_dst_pretrain.load_state_dict(torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model)), map_location=torch.device('cpu')))
+        encoder_dst_pretrain.load_state_dict(
+            torch.load(os.path.join(dst_pretrain_dir, "{}-match-best-now.mdl".format(args.base_model)),
+                       map_location=torch.device('cpu')))
 
     map(lambda m: m.eval(), encoders_src + classifiers + [encoder_dst_pretrain])
 
@@ -1239,7 +1387,7 @@ def train_moe_stack(args):
 
     domain_encs = domain_encoding(train_loaders, args, encoders_src)
 
-    meta_features = np.empty(shape=(0, 4))
+    meta_features = np.empty(shape=(0, 192 + 2 * 8))
     meta_labels = []
 
     if args.base_model == "cnn":
@@ -1342,8 +1490,8 @@ def train_moe_stack(args):
                 label = label.cuda()
 
             _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
-            out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
-            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+            # out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
+            out_dst_cnn = torch.softmax(encoder_dst_pretrain.output(hidden_dst), dim=1)
 
             if args.metric == "biaffine":
                 alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
@@ -1373,14 +1521,18 @@ def train_moe_stack(args):
                 output = output.cpu()
                 out_dst_cnn = out_dst_cnn.cpu()
                 label = label.cpu()
-            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            # cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            output_np = output.detach().numpy()
+            output_dup = np.concatenate((output_np, output_np, output_np, output_np,
+                                         output_np, output_np, output_np, output_np), axis=1)
+            cur_feature = np.concatenate((hidden_dst.detach().numpy(), output_dup), axis=1)
             meta_features = np.concatenate((meta_features, cur_feature), axis=0)
             meta_labels += label.data.tolist()
 
         # print("meta features", meta_features)
         # print("meta labels", meta_labels)
 
-        meta_features_valid = np.empty(shape=(0, 4))
+        meta_features_valid = np.empty(shape=(0, 192 + 2 * 8))
         meta_labels_valid = []
 
         for batch1, batch2, batch3, batch4, label in valid_loader:
@@ -1392,8 +1544,8 @@ def train_moe_stack(args):
                 label = label.cuda()
 
             _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
-            out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
-            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+            # out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
+            out_dst_cnn = torch.softmax(encoder_dst_pretrain.output(hidden_dst), dim=1)
 
             if args.metric == "biaffine":
                 alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
@@ -1423,13 +1575,16 @@ def train_moe_stack(args):
                 output = output.cpu()
                 out_dst_cnn = out_dst_cnn.cpu()
                 label = label.cpu()
-            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            # cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            output_np = output.detach().numpy()
+            output_dup = np.concatenate((output_np, output_np, output_np, output_np,
+                                         output_np, output_np, output_np, output_np), axis=1)
+            cur_feature = np.concatenate((hidden_dst.detach().numpy(), output_dup), axis=1)
             meta_features_valid = np.concatenate((meta_features_valid, cur_feature), axis=0)
             meta_labels_valid += label.data.tolist()
 
-        meta_features_test = np.empty(shape=(0, 4))
+        meta_features_test = np.empty(shape=(0, 192 + 2 * 8))
         meta_labels_test = []
-
 
         for batch1, batch2, batch3, batch4, label in test_loader:
             if args.cuda:
@@ -1440,8 +1595,8 @@ def train_moe_stack(args):
                 label = label.cuda()
 
             _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
-            out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
-            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+            # out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
+            out_dst_cnn = torch.softmax(encoder_dst_pretrain.output(hidden_dst), dim=1)
 
             if args.metric == "biaffine":
                 alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
@@ -1471,9 +1626,77 @@ def train_moe_stack(args):
                 output = output.cpu()
                 out_dst_cnn = out_dst_cnn.cpu()
                 label = label.cpu()
-            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            # cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            output_np = output.detach().numpy()
+            output_dup = np.concatenate((output_np, output_np, output_np, output_np,
+                                         output_np, output_np, output_np, output_np), axis=1)
+            cur_feature = np.concatenate((hidden_dst.detach().numpy(), output_dup), axis=1)
             meta_features_test = np.concatenate((meta_features_test, cur_feature), axis=0)
             meta_labels_test += label.data.tolist()
+
+        ensb_model = SimpleMLP()
+
+        # print("meta labels", meta_labels)
+        meta_dataset_train = SimpleDataset(meta_features, meta_labels)
+        meta_dataset_valid = SimpleDataset(meta_features_valid, meta_labels_valid)
+        meta_dataset_test = SimpleDataset(meta_features_test, meta_labels_test)
+
+        meta_train_loader = data.DataLoader(
+            meta_dataset_train,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+
+        meta_valid_loader = data.DataLoader(
+            meta_dataset_valid,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+
+        meta_test_loader = data.DataLoader(
+            meta_dataset_test,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+
+        if args.cuda:
+            ensb_model.cuda()
+
+        meta_params = ensb_model.parameters()
+
+        optimizer = optim.Adam(meta_params, lr=args.lr, weight_decay=args.weight_decay)
+
+        loss_val_min = None
+        best_test_metric = None
+
+        for epoch in range(args.max_epoch):
+            print("training epoch", epoch)
+            metrics = meta_train(epoch, meta_train_loader, meta_valid_loader, meta_test_loader, ensb_model, optimizer, args=args)
+
+            metrics_val, metrics_test = metrics
+            if metrics_val is not None:
+                # result write
+                # result_logger.write(
+                #     ["valid", metrics_val[0], metrics_val[2]*100, metrics_val[3]*100, metrics_val[4]*100,
+                #      "test", metrics_test[0], metrics_test[2]*100, metrics_test[3]*100, metrics_test[4]*100])
+                if loss_val_min is None:
+                    loss_val_min = metrics_val[0]
+                    best_test_metric = metrics_test
+                    best_model = ensb_model
+                    # torch.save(best_model.state_dict(), os.path.join(model_dir, "rnn-match-best-now.mdl"))
+                elif metrics_val[0] < loss_val_min:
+                    loss_val_min = metrics_val[0]
+                    best_test_metric = metrics_test
+                    best_model = ensb_model
+                    # torch.save(best_model.state_dict(), os.path.join(model_dir, "rnn-match-best-now.mdl"))
+
+        print("min_val_loss", loss_val_min, "best test metrics", best_test_metric[2:])
+
+        raise
+
 
     start_dim = 0
     end_dim = 2
@@ -1481,11 +1704,21 @@ def train_moe_stack(args):
     print("meta features", meta_features)
     meta_features_train_trans = scaler.fit_transform(meta_features)
     print("meta features trans", meta_features_train_trans)
+    meta_features_valid_trans = scaler.transform(meta_features_valid)
+
     # clf = LogisticRegression(C=0.01, solver="saga").fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
     # print(clf.coef_)
     # clf = SVC(kernel="linear", C=0.002, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)  #venue svm can
-    clf = SVC(kernel="rbf", C=100, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)  #venue svm can
-    # clf = RandomForestClassifier(max_depth=3, n_estimators=10).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+    # clf = SVC(kernel="rbf", C=100, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)  #venue svm can
+    clf = RandomForestClassifier(max_depth=3, n_estimators=10).fit(meta_features_train_trans[:, start_dim:end_dim],
+                                                                   meta_labels)
+
+    # clf = xgb.XGBClassifier(n_estimators=20)
+    # clf.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+
+    # clf = AdaBoostClassifier(n_estimators=20)
+    # clf.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+
     # clf = SVC(gamma=2, C=0.05, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
     # clf = LinearSVC().fit(meta_features_train_trans[:, 0:2], meta_labels)
     # svc = SVC(probability=True)
@@ -1494,39 +1727,45 @@ def train_moe_stack(args):
     # clf.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
     # best_params = clf.best_params_
     # print("best params", best_params)
-    kernels = ["rbf", "linear"]
-    # kernels = ["rbf"]
+    # kernels = ["rbf", "linear"]
+    kernels = ["rbf"]
     C_range = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100]
+    n_est = [10, 20, 50, 100]
     best_valid_auc = 0
     best_valid_f1 = 0
-    meta_features_valid_trans = scaler.transform(meta_features_valid)
     best_conf = None
-    for k in kernels:
-        for c in C_range[::-1]:
-            svc = SVC(probability=True, kernel=k, C=c)
-            # svc = LogisticRegression(C=c)
-            clf = svc.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
-            pred_valid = clf.predict(meta_features_valid_trans[:, start_dim:end_dim])
-            prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_valid, pred_valid, average="binary")
-
-            pred_scores_valid = clf.predict_proba(meta_features_valid_trans[:, start_dim:end_dim])
-            auc = roc_auc_score(meta_labels_valid, pred_scores_valid[:, 1])
-            print("---------", k, c, f1, auc)
-            # if auc > best_valid_auc:
-            if f1 > best_valid_f1:
-                # best_valid_auc = auc
-                best_valid_f1 = f1
-                best_conf = (k, c)
-                print("best conf now", (k, c), "cur auc", best_valid_auc)
-                best_clf = deepcopy(clf)
-
-    clf = best_clf
-    print("test clf", clf)
+    # for k in kernels:
+    #     for c in C_range[::-1]:
+    #     # for c in n_est:
+    #     #     svc = SVC(probability=True, kernel=k, C=c)
+    #         svc = LogisticRegression(C=c)
+    #         # svc = xgb.XGBClassifier(n_estimators=c)
+    #         clf = svc.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+    #         pred_valid = clf.predict(meta_features_valid_trans[:, start_dim:end_dim])
+    #         prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_valid, pred_valid, average="binary")
+    #
+    #         pred_scores_valid = clf.predict_proba(meta_features_valid_trans[:, start_dim:end_dim])
+    #         auc = roc_auc_score(meta_labels_valid, pred_scores_valid[:, 1])
+    #         print("---------", k, c, f1, auc)
+    #         # if auc > best_valid_auc:
+    #         if f1 > best_valid_f1:
+    #             # best_valid_auc = auc
+    #             best_valid_f1 = f1
+    #             best_conf = (k, c)
+    #             print("best conf now", (k, c), "cur auc", best_valid_auc)
+    #             best_clf = deepcopy(clf)
+    #
+    # clf = best_clf
+    # print("test clf", clf)
     meta_features_test_trans = scaler.transform(meta_features_test)
 
     y_pred_test = clf.predict(meta_features_test_trans[:, start_dim:end_dim])
     y_score_test = clf.predict_proba(meta_features_test_trans[:, start_dim:end_dim])
     # print(y_score_test)
+
+    # y_score_test = (meta_features_test[:, :2] + meta_features_test[:,2:])/2
+    # y_pred_test = np.argmax(y_score_test, axis=1)
+    # print("y_pred_test", y_pred_test)
 
     prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_test, y_pred_test, average="binary")
     # print("y_score", y_score)
