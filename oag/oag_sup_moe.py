@@ -36,6 +36,9 @@ from models.rnn import BiLSTM
 
 from utils import settings
 
+import warnings
+warnings.filterwarnings("ignore")
+
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
 argparser.add_argument("--train", type=str, default="aff,author,paper",
@@ -953,6 +956,7 @@ def train(args):
             # nn.Sigmoid()
         )
         classifiers.append(classifier)
+    print("classifier build", classifiers[0])
 
     critic = critic_class(encoders_src[0], args)
 
@@ -961,7 +965,7 @@ def train(args):
     #     torch.save([encoder, classifiers, Us, Ps, Ns], args.save_model + ".init")
 
     save_model_dir = os.path.join(settings.OUT_DIR, args.test)
-    classifiers, Us, Ps, Ns = torch.load(os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
+    # classifiers, Us, Ps, Ns = torch.load(os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
 
     if args.cuda:
         map(lambda m: m.cuda(), [critic, encoder_dst_pretrain] + classifiers + encoders_src)
