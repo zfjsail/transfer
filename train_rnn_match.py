@@ -235,7 +235,10 @@ def main(args=args):
     if args.cuda:
         torch.cuda.manual_seed(args.seed + args.delta_seed)
 
+    pretrain_emb = torch.load(join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+
     model = BiLSTM(vocab_size=args.max_vocab_size,
+        pretrain_emb=pretrain_emb,
                    embedding_size=args.embedding_size,
                    hidden_size=args.hidden_size,
                    dropout=args.dropout)

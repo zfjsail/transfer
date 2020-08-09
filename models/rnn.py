@@ -3,7 +3,7 @@ from torch import nn
 
 
 class BiLSTM(nn.Module):
-    def __init__(self, vocab_size=10000, batch_size=32, embedding_size=128, hidden_size=32, dropout=0.2,
+    def __init__(self, vocab_size, pretrain_emb, embedding_size=128, hidden_size=32, dropout=0.2,
                  multiple=0, pretrain=None):
         super(BiLSTM, self).__init__()
         self.vocab_size = vocab_size
@@ -15,9 +15,11 @@ class BiLSTM(nn.Module):
         # embedding layer
         self.embed_seq = nn.Embedding(self.vocab_size + 1, embedding_size)
         self.embed_keyword_seq = nn.Embedding(self.vocab_size + 1, embedding_size)
-        if pretrain is not None:
-            self.embed_seq.weight = nn.Parameter(torch.FloatTensor(pretrain))
-            embedding_size = pretrain.shape[1]
+        self.embed_seq.weight = nn.Parameter(pretrain_emb, requires_grad=False)
+        self.embed_keyword_seq.weight = nn.Parameter(pretrain_emb, requires_grad=False)
+        # if pretrain is not None:
+        #     self.embed_seq.weight = nn.Parameter(torch.FloatTensor(pretrain))
+        #     embedding_size = pretrain.shape[1]
         # print(type(self.embed_seq.weight))
 
         self.embed_seq.weight.requires_grad = False

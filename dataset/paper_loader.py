@@ -201,18 +201,20 @@ class PaperRNNMatchDataset(Dataset):
         self.labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
         pairs = pos_pairs + neg_pairs
 
-        corpus = []
-        for i, pair in enumerate(pairs):
-            if i % 100 == 0:
-                logger.info('pairs to matrices %d', i)
-            cpaper, npaper = pair
-            corpus.append(cpaper["title"])
-            corpus.append(npaper["title"])
-            corpus.append(" ".join(cpaper["authors"]))
-            corpus.append(" ".join(npaper["authors"]))
+        # corpus = []
+        # for i, pair in enumerate(pairs):
+        #     if i % 100 == 0:
+        #         logger.info('pairs to matrices %d', i)
+        #     cpaper, npaper = pair
+        #     corpus.append(cpaper["title"])
+        #     corpus.append(npaper["title"])
+        #     corpus.append(" ".join(cpaper["authors"]))
+        #     corpus.append(" ".join(npaper["authors"]))
+        #
+        # t = Tokenizer(num_words=99999)
+        # t.fit_on_texts(corpus)
 
-        t = Tokenizer(num_words=99999)
-        t.fit_on_texts(corpus)
+        t = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         self.vocab_size = len(t.word_counts)
         print("vocab size", self.vocab_size)

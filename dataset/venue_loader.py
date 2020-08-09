@@ -165,15 +165,17 @@ class VenueRNNMatchDataset(Dataset):
         # self.tokenizer = _pickle.load(open(join(settings.DATA_DIR, 'venues', "tokenizer"), "rb"))
         # print(self.tokenizer)
 
-        corpus = []
-        for item in self.train_data:
-            corpus.append(item[1].lower())
-            corpus.append(item[2].lower())
+        # corpus = []
+        # for item in self.train_data:
+        #     corpus.append(item[1].lower())
+        #     corpus.append(item[2].lower())
         # vectorizer = CountVectorizer()
         # X = vectorizer.fit_transform(corpus)
         # print(len(vectorizer.vocabulary_), vectorizer.vocabulary_)
-        t = Tokenizer()
-        t.fit_on_texts(corpus)
+        # t = Tokenizer()
+        # t.fit_on_texts(corpus)
+
+        t = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         self.vocab_size = len(t.word_counts)
         print("vocab size", self.vocab_size)

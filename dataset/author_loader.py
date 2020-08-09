@@ -274,21 +274,23 @@ class AuthorRNNMatchDataset(Dataset):
         nn_pos = 0
         nn_neg = 0
 
-        for i, pair in enumerate(pairs):
-            if i % 100 == 0:
-                logger.info('pairs to matrices %d %d %d', i, nn_pos, nn_neg)
-            # cpaper, npaper = pair
-            aid, mid = pair['aid'], pair['mid']
-            aperson = self.person_dict.get(aid, {})
-            mperson = self.person_dict.get(mid, {})
-            corpus.append(aperson.get("pubs", []))
-            corpus.append(mperson.get("pubs", []))
+        # for i, pair in enumerate(pairs):
+        #     if i % 100 == 0:
+        #         logger.info('pairs to matrices %d %d %d', i, nn_pos, nn_neg)
+        #     # cpaper, npaper = pair
+        #     aid, mid = pair['aid'], pair['mid']
+        #     aperson = self.person_dict.get(aid, {})
+        #     mperson = self.person_dict.get(mid, {})
+        #     corpus.append(aperson.get("pubs", []))
+        #     corpus.append(mperson.get("pubs", []))
+        #
+        #     corpus.append([item["id"] for item in aperson.get("venue", [])])
+        #     corpus.append([item["id"] for item in mperson.get("venue", [])])
+        #
+        # t = Tokenizer(num_words=100000)
+        # t.fit_on_texts(corpus)
 
-            corpus.append([item["id"] for item in aperson.get("venue", [])])
-            corpus.append([item["id"] for item in mperson.get("venue", [])])
-
-        t = Tokenizer(num_words=100000)
-        t.fit_on_texts(corpus)
+        t = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         self.vocab_size = len(t.word_counts)
         print("vocab size", self.vocab_size)

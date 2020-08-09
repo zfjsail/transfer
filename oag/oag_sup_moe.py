@@ -4,7 +4,7 @@ import time
 import random
 from copy import copy, deepcopy
 from termcolor import colored, cprint
-
+from copy import deepcopy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -21,6 +21,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_recall_fscore_support
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import precision_recall_curve
+from sklearn.model_selection import GridSearchCV
 
 sys.path.append('../')
 from msda_src.model_utils import get_model_class, get_critic_class
@@ -792,6 +793,8 @@ def train(args):
     source_train_sets = args.train.split(',')
     print("sources", source_train_sets)
 
+    pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+
     # encoder_class = get_model_class("mlp")
     # encoder_class.add_config(argparser)
     encoders_src = []
@@ -805,7 +808,8 @@ def train(args):
                                       mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                       mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
         elif args.base_model == "rnn":
-            encoder_class = BiLSTM(vocab_size=args.max_vocab_size,
+            encoder_class = BiLSTM(pretrain_emb=pretrain_emb,
+                vocab_size=args.max_vocab_size,
                    embedding_size=args.embedding_size,
                    hidden_size=args.hidden_size,
                    dropout=args.dropout)
@@ -826,7 +830,8 @@ def train(args):
                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
     elif args.base_model == "rnn":
-        encoder_dst_pretrain = BiLSTM(vocab_size=args.max_vocab_size,
+        encoder_dst_pretrain = BiLSTM(pretrain_emb=pretrain_emb,
+            vocab_size=args.max_vocab_size,
                    embedding_size=args.embedding_size,
                    hidden_size=args.hidden_size,
                    dropout=args.dropout)
@@ -1116,6 +1121,7 @@ def train_moe_stack(args):
     print("classifier", classifiers[0])
 
     source_train_sets = args.train.split(',')
+    pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
 
     encoders_src = []
     for src_i in range(len(source_train_sets)):
@@ -1128,7 +1134,8 @@ def train_moe_stack(args):
                                       mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                       mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
         elif args.base_model == "rnn":
-            encoder_class = BiLSTM(vocab_size=args.max_vocab_size,
+            encoder_class = BiLSTM(pretrain_emb=pretrain_emb,
+                vocab_size=args.max_vocab_size,
                    embedding_size=args.embedding_size,
                    hidden_size=args.hidden_size,
                    dropout=args.dropout)
@@ -1149,7 +1156,8 @@ def train_moe_stack(args):
                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
     elif args.base_model == "rnn":
-        encoder_dst_pretrain = BiLSTM(vocab_size=args.max_vocab_size,
+        encoder_dst_pretrain = BiLSTM(pretrain_emb=pretrain_emb,
+            vocab_size=args.max_vocab_size,
                    embedding_size=args.embedding_size,
                    hidden_size=args.hidden_size,
                    dropout=args.dropout)
@@ -1360,8 +1368,56 @@ def train_moe_stack(args):
         # print("meta features", meta_features)
         # print("meta labels", meta_labels)
 
+        meta_features_valid = np.empty(shape=(0, 4))
+        meta_labels_valid = []
+
+        for batch1, batch2, batch3, batch4, label in valid_loader:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                batch3 = batch3.cuda()
+                batch4 = batch4.cuda()
+                label = label.cuda()
+
+            _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
+            out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
+            # out_dst_cnn = torch.softmax(encoder_dst_pretrain.fc_out(hidden_dst), dim=1)
+
+            if args.metric == "biaffine":
+                alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
+                          for mu in domain_encs]
+            else:
+                alphas = [mahalanobis_metric_fast(hidden_dst, mu[0], U, mu[1], P, mu[2], N) \
+                          for (mu, U, P, N) in zip(domain_encs, Us, Ps, Ns)]
+
+            alphas = softmax(alphas)
+            if args.cuda:
+                alphas = [alpha.cuda() for alpha in alphas]
+            alphas = [Variable(alpha) for alpha in alphas]
+
+            outputs_dst_transfer = []
+            for src_i in range(len(train_loaders)):
+                _, cur_hidden = encoders_src[src_i](batch1, batch2, batch3, batch4)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
+
+            # outputs = [F.softmax(classifier(hidden), dim=1) for classifier in classifiers]
+            outputs = [F.softmax(out, dim=1) for out in outputs_dst_transfer]
+
+            output = sum([alpha.unsqueeze(1).repeat(1, 2) * output_i \
+                          for (alpha, output_i) in zip(alphas, outputs)])
+
+            if args.cuda:
+                output = output.cpu()
+                out_dst_cnn = out_dst_cnn.cpu()
+                label = label.cpu()
+            cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
+            meta_features_valid = np.concatenate((meta_features_valid, cur_feature), axis=0)
+            meta_labels_valid += label.data.tolist()
+
         meta_features_test = np.empty(shape=(0, 4))
         meta_labels_test = []
+
 
         for batch1, batch2, batch3, batch4, label in test_loader:
             if args.cuda:
@@ -1407,19 +1463,57 @@ def train_moe_stack(args):
             meta_features_test = np.concatenate((meta_features_test, cur_feature), axis=0)
             meta_labels_test += label.data.tolist()
 
+    start_dim = 0
+    end_dim = 2
     scaler = StandardScaler()
     print("meta features", meta_features)
     meta_features_train_trans = scaler.fit_transform(meta_features)
     print("meta features trans", meta_features_train_trans)
-    # clf = LogisticRegression(C=0.01, solver="saga").fit(meta_features_train_trans[:, 2:4], meta_labels)
+    # clf = LogisticRegression(C=0.01, solver="saga").fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
     # print(clf.coef_)
-    # clf = SVC(kernel="linear", C=0.002, probability=True).fit(meta_features_train_trans[:, 2:4], meta_labels)
-    # clf = RandomForestClassifier(max_depth=3, n_estimators=10).fit(meta_features_train_trans[:, 2:4], meta_labels)
-    clf = SVC(gamma=2, C=0.1, probability=True).fit(meta_features_train_trans[:, 2:4], meta_labels)
+    # clf = SVC(kernel="linear", C=0.002, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)  #venue svm can
+    clf = SVC(kernel="rbf", C=100, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)  #venue svm can
+    # clf = RandomForestClassifier(max_depth=3, n_estimators=10).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+    # clf = SVC(gamma=2, C=0.05, probability=True).fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
     # clf = LinearSVC().fit(meta_features_train_trans[:, 0:2], meta_labels)
+    # svc = SVC(probability=True)
+    # parameters = {'kernel': ('linear', 'rbf'), 'C': [0.001, 0.01, 0.1, 1, 10, 50]}
+    # clf = GridSearchCV(svc, parameters, verbose=1)
+    # clf.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+    # best_params = clf.best_params_
+    # print("best params", best_params)
+    kernels = ["rbf", "linear"]
+    # kernels = ["rbf"]
+    C_range = [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100]
+    best_valid_auc = 0
+    best_valid_f1 = 0
+    meta_features_valid_trans = scaler.transform(meta_features_valid)
+    best_conf = None
+    for k in kernels:
+        for c in C_range[::-1]:
+            svc = SVC(probability=True, kernel=k, C=c)
+            # svc = LogisticRegression(C=c)
+            clf = svc.fit(meta_features_train_trans[:, start_dim:end_dim], meta_labels)
+            pred_valid = clf.predict(meta_features_valid_trans[:, start_dim:end_dim])
+            prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_valid, pred_valid, average="binary")
+
+            pred_scores_valid = clf.predict_proba(meta_features_valid_trans[:, start_dim:end_dim])
+            auc = roc_auc_score(meta_labels_valid, pred_scores_valid[:, 1])
+            print("---------", k, c, f1, auc)
+            # if auc > best_valid_auc:
+            if f1 > best_valid_f1:
+                # best_valid_auc = auc
+                best_valid_f1 = f1
+                best_conf = (k, c)
+                print("best conf now", (k, c), "cur auc", best_valid_auc)
+                best_clf = deepcopy(clf)
+
+    clf = best_clf
+    print("test clf", clf)
     meta_features_test_trans = scaler.transform(meta_features_test)
-    y_pred_test = clf.predict(meta_features_test_trans[:, 2:4])
-    y_score_test = clf.predict_proba(meta_features_test_trans[:, 2:4])
+
+    y_pred_test = clf.predict(meta_features_test_trans[:, start_dim:end_dim])
+    y_score_test = clf.predict_proba(meta_features_test_trans[:, start_dim:end_dim])
     # print(y_score_test)
 
     prec, rec, f1, _ = precision_recall_fscore_support(meta_labels_test, y_pred_test, average="binary")

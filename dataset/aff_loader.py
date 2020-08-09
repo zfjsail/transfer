@@ -167,22 +167,24 @@ class AffRNNMatchDataset(Dataset):
         self.labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
         pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
 
-        corpus = []
-        for item in pairs:
-            corpus.append(item[0]["name"].lower())
-            corpus.append(item[1]["DisplayName"].lower())
+        # corpus = []
+        # for item in pairs:
+        #     corpus.append(item[0]["name"].lower())
+        #     corpus.append(item[1]["DisplayName"].lower())
+        #
+        # t = Tokenizer(num_words=9999)
+        # t.fit_on_texts(corpus)
 
-        t = Tokenizer(num_words=9999)
-        t.fit_on_texts(corpus)
+        t = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         self.vocab_size = len(t.word_counts)
         print("vocab size", self.vocab_size)
-        print("tokenizer", t.word_index)
+        # print("tokenizer", t.word_index)
 
         self.mag = t.texts_to_sequences([p[1]["DisplayName"] for p in pairs])
         for mag_aff in self.mag:
             for word_idx in mag_aff:
-                assert word_idx <= 10000
+                assert word_idx <= 100000
         self.aminer = t.texts_to_sequences([p[0]["name"] for p in pairs])
         self.mag = pad_sequences(self.mag, maxlen=self.max_seq1_len)
         self.aminer = pad_sequences(self.aminer, maxlen=self.max_seq1_len)
