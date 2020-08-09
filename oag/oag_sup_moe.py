@@ -941,9 +941,17 @@ def train(args):
 
     classifiers = []
     for source in source_train_sets:
-        classifier = nn.Linear(encoders_src[0].n_out, 2)  # binary classification
+        # classifier = nn.Linear(encoders_src[0].n_out, 2)  # binary classification
         # nn.init.xavier_normal(classifier.weight)
         # nn.init.constant(classifier.bias, 0.1)
+        classifier = nn.Sequential(
+            nn.Linear(encoders_src[0].n_out, 64),
+            nn.ReLU(),
+            nn.Linear(64, 16),
+            nn.ReLU(),
+            nn.Linear(16, 2),
+            # nn.Sigmoid()
+        )
         classifiers.append(classifier)
 
     critic = critic_class(encoders_src[0], args)
