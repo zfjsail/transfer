@@ -44,7 +44,7 @@ warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
-argparser.add_argument("--train", type=str, default="aff,author,paper",
+argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
 argparser.add_argument("--test", type=str, default="venue",
                        help="target domain for testing")
@@ -1140,7 +1140,8 @@ class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(192 + 2*8, 64),
+            # nn.Linear(192 + 2*8, 64),
+            nn.Linear(192, 64),
             nn.ReLU(),
             nn.Linear(64, 16),
             nn.ReLU(),
@@ -1148,6 +1149,7 @@ class SimpleMLP(nn.Module):
         )
 
     def forward(self, meta_x):
+        meta_x = meta_x[:, :192]
         out = self.fc(meta_x)
         return torch.log_softmax(out, dim=1)
 
@@ -1586,6 +1588,9 @@ def train_moe_stack(args):
         meta_features_test = np.empty(shape=(0, 192 + 2 * 8))
         meta_labels_test = []
 
+        wf1 = open(os.path.join(settings.OUT_DIR, args.test, "{}_{}_test_results.csv".format(args.test, args.base_model)), "w")
+        wf2 = open(os.path.join(settings.OUT_DIR, args.test, "{}_{}_sup_moe_test_results.csv".format(args.test, args.base_model)), "w")
+
         for batch1, batch2, batch3, batch4, label in test_loader:
             if args.cuda:
                 batch1 = batch1.cuda()
@@ -1597,6 +1602,10 @@ def train_moe_stack(args):
             _, hidden_dst = encoder_dst_pretrain(batch1, batch2, batch3, batch4)
             # out_dst_cnn = encoder_dst_pretrain.output(hidden_dst)
             out_dst_cnn = torch.softmax(encoder_dst_pretrain.output(hidden_dst), dim=1)
+            out_dst_cnn_npy = out_dst_cnn.detach().numpy()
+            label_npy = label.detach().numpy()
+            for line_i in range(len(label)):
+                wf1.write("{},{}\n".format(out_dst_cnn_npy[line_i, 1], label_npy[line_i]))
 
             if args.metric == "biaffine":
                 alphas = [biaffine_metric_fast(hidden_dst, mu[0], Us[0]) \
@@ -1628,18 +1637,32 @@ def train_moe_stack(args):
                 label = label.cpu()
             # cur_feature = np.concatenate((out_dst_cnn.detach().numpy(), output.detach().numpy()), axis=1)
             output_np = output.detach().numpy()
+
+            for line_i in range(len(label)):
+                wf2.write("{},{}\n".format(output_np[line_i, 1], label_npy[line_i]))
+
             output_dup = np.concatenate((output_np, output_np, output_np, output_np,
                                          output_np, output_np, output_np, output_np), axis=1)
             cur_feature = np.concatenate((hidden_dst.detach().numpy(), output_dup), axis=1)
             meta_features_test = np.concatenate((meta_features_test, cur_feature), axis=0)
             meta_labels_test += label.data.tolist()
 
+        wf1.close()
+        wf2.close()
         ensb_model = SimpleMLP()
+
+        scaler = StandardScaler()
+        print("meta features", meta_features)
+        meta_features_train_trans = scaler.fit_transform(meta_features)
+        meta_features_valid_trans = scaler.transform(meta_features_valid)
+        meta_features_test_trans = scaler.transform(meta_features_test)
 
         # print("meta labels", meta_labels)
         meta_dataset_train = SimpleDataset(meta_features, meta_labels)
         meta_dataset_valid = SimpleDataset(meta_features_valid, meta_labels_valid)
         meta_dataset_test = SimpleDataset(meta_features_test, meta_labels_test)
+
+        print("meta features test", meta_dataset_test.x)
 
         meta_train_loader = data.DataLoader(
             meta_dataset_train,
@@ -1667,7 +1690,7 @@ def train_moe_stack(args):
 
         meta_params = ensb_model.parameters()
 
-        optimizer = optim.Adam(meta_params, lr=args.lr, weight_decay=args.weight_decay)
+        optimizer = optim.Adam(meta_params, lr=1e-4, weight_decay=1e-3)
 
         loss_val_min = None
         best_test_metric = None
