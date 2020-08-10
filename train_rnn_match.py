@@ -67,8 +67,6 @@ parser.add_argument('--use-pretrain', type=bool, default=True)
 
 args = parser.parse_args()
 
-args = parser.parse_args()
-
 writer = SummaryWriter('runs/{}_rnn_{}'.format(args.entity_type, args.delta_seed))
 
 

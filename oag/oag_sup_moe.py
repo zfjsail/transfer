@@ -929,6 +929,7 @@ def train(args):
         test_dataset = ProcessedRNNInputDataset(args.test, "test")
     else:
         raise NotImplementedError
+
     train_loader_dst = data.DataLoader(
         train_dataset_dst,
         batch_size=args.batch_size,
@@ -1140,8 +1141,8 @@ class SimpleMLP(nn.Module):
     def __init__(self):
         super(SimpleMLP, self).__init__()
         self.fc = nn.Sequential(
-            # nn.Linear(192 + 2*8, 64),
-            nn.Linear(192, 64),
+            nn.Linear(192 + 2*8, 64),
+            # nn.Linear(192, 64),
             nn.ReLU(),
             nn.Linear(64, 16),
             nn.ReLU(),
@@ -1149,7 +1150,7 @@ class SimpleMLP(nn.Module):
         )
 
     def forward(self, meta_x):
-        meta_x = meta_x[:, :192]
+        # meta_x = meta_x[:, :192]
         out = self.fc(meta_x)
         return torch.log_softmax(out, dim=1)
 
