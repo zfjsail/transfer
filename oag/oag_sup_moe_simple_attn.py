@@ -519,9 +519,10 @@ def train(args):
             epoch,
             encoders_src, classifiers,
             attn_mats,
-            valid_loader,
-            True,
-            args
+            test_loader,
+            False,
+            args,
+            thr=thr
         )
 
         if min_loss_val is None or min_loss_val > metrics_val[0]:
