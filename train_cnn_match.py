@@ -54,7 +54,7 @@ parser.add_argument('--dropout', type=float, default=0.2,
 parser.add_argument('--batch', type=int, default=32, help="Batch size")
 parser.add_argument('--check-point', type=int, default=2, help="Check point")
 parser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
-parser.add_argument('--entity-type', type=str, default="venue", help="Types of entities to match")
+parser.add_argument('--entity-type', type=str, default="aff", help="Types of entities to match")
 
 parser.add_argument('--file-dir', type=str, default=settings.AFF_DATA_DIR, help="Input file directory")
 parser.add_argument('--train-ratio', type=float, default=10, help="Training ratio (0, 100)")
