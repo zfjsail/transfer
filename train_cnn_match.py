@@ -211,6 +211,7 @@ def main(args=args):
     min_loss_val = None
     best_test_metrics = None
     for epoch in range(args.epochs):
+        print("training epoch", epoch)
         metrics_val, metrics_test = train(epoch, train_loader, valid_loader, test_loader, model, optimizer, args=args)
         if metrics_val is not None:
             if min_loss_val is None or min_loss_val > metrics_val[0]:
