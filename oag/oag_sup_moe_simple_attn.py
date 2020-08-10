@@ -44,7 +44,7 @@ warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
-argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
+argparser.add_argument("--train", type=str, default="aff,author,paper",
                        help="multi-source domains for training, separated with (,)")
 argparser.add_argument("--test", type=str, default="venue",
                        help="target domain for testing")
@@ -62,7 +62,7 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
-argparser.add_argument("--base_model", type=str, default="cnn")
+argparser.add_argument("--base_model", type=str, default="rnn")
 argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
@@ -80,10 +80,10 @@ argparser.add_argument('--mat1-channel1', type=int, default=8, help='Matrix1 num
 argparser.add_argument('--mat1-kernel-size1', type=int, default=3, help='Matrix1 kernel size1.')
 argparser.add_argument('--mat1-channel2', type=int, default=16, help='Matrix1 number of channel2.')
 argparser.add_argument('--mat1-kernel-size2', type=int, default=2, help='Matrix1 kernel size2.')
-argparser.add_argument('--mat1-hidden', type=int, default=512, help='Matrix1 hidden dim.')
+argparser.add_argument('--mat1-hidden', type=int, default=64, help='Matrix1 hidden dim.')
 argparser.add_argument('--mat2-channel1', type=int, default=8, help='Matrix2 number of channels1.')
 argparser.add_argument('--mat2-kernel-size1', type=int, default=2, help='Matrix2 kernel size1.')
-argparser.add_argument('--mat2-hidden', type=int, default=512, help='Matrix2 hidden dim')
+argparser.add_argument('--mat2-hidden', type=int, default=64, help='Matrix2 hidden dim')
 argparser.add_argument('--build-index-window', type=int, default=5, help='Matrix2 hidden dim')
 argparser.add_argument('--seed', type=int, default=42, help='Random seed.')
 argparser.add_argument('--seed-delta', type=int, default=0, help='Random seed.')
