@@ -1800,5 +1800,5 @@ def train_moe_stack(args):
 
 
 if __name__ == '__main__':
-    train(args)
-    # train_moe_stack(args)
+    # train(args)
+    train_moe_stack(args)

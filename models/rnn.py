@@ -9,8 +9,8 @@ class BiLSTM(nn.Module):
         self.vocab_size = vocab_size
         # self.msl = max_sequence_length
         self.multiple = multiple
-        self.n_d = 192
-        self.n_out = 192
+        self.n_d = 16
+        self.n_out = 16
 
         # embedding layer
         self.embed_seq = nn.Embedding(self.vocab_size + 1, embedding_size)
@@ -39,9 +39,10 @@ class BiLSTM(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 16),
             nn.ReLU(),
-            nn.Linear(16, 2),
+            # nn.Linear(16, 2),
             # nn.Sigmoid()
         )
+        self.output_final = nn.Linear(16, 2)
 
     def forward(self, mag, aminer, keyword_mag, keyword_aminer):
         mag = self.embed_seq(mag)
@@ -73,6 +74,7 @@ class BiLSTM(nn.Module):
 
         # print("concat output", concat_input.size(), concat_input)
 
-        output = self.output(concat_input)
+        output_hidden = self.output(concat_input)
+        output = self.output_final(output_hidden)
         # output = self.sigmoid(output)
-        return torch.log_softmax(output, dim=1), concat_input
+        return torch.log_softmax(output, dim=1), output_hidden

@@ -51,7 +51,7 @@ parser.add_argument('--instance-normalization', action='store_true', default=Tru
                     help="Enable instance normalization")
 parser.add_argument('--shuffle', action='store_true', default=True, help="Shuffle dataset")
 parser.add_argument('--file-dir', type=str, default=settings.VENUE_DATA_DIR, help="Input file directory")
-parser.add_argument('--entity-type', type=str, default="venue", help="entity type to match")
+parser.add_argument('--entity-type', type=str, default="aff", help="entity type to match")
 
 parser.add_argument('--max-vocab-size', type=int, default=100000, help="Maximum of Vocab Size")
 parser.add_argument('--train-ratio', type=float, default=60, help="Training ratio (0, 100)")

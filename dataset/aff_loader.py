@@ -38,8 +38,9 @@ class AffCNNMatchDataset(Dataset):
         neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
         neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
         n_pos = len(pos_pairs)
-        labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
-        pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
+        labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
+        # pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
+        pairs = pos_pairs + neg_pairs  # label balanced is important
 
         n_matrix = len(pairs)
         self.X_long = np.zeros((n_matrix, self.matrix_size_1_long, self.matrix_size_1_long))
@@ -251,6 +252,6 @@ if __name__ == "__main__":
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    # dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args)
-    dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
-                              args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args)
+    # dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
+    #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)

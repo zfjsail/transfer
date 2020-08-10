@@ -44,7 +44,7 @@ warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
-argparser.add_argument("--train", type=str, default="aff,author,paper",
+argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
 argparser.add_argument("--test", type=str, default="venue",
                        help="target domain for testing")
@@ -53,7 +53,7 @@ argparser.add_argument("--critic", type=str, default="mmd")
 argparser.add_argument("--batch_size", type=int, default=32)
 argparser.add_argument("--batch_size_d", type=int, default=32)
 argparser.add_argument("--max_epoch", type=int, default=200)
-argparser.add_argument("--lr", type=float, default=1e-4)
+argparser.add_argument("--lr", type=float, default=5e-4)
 argparser.add_argument("--lr_d", type=float, default=1e-4)
 argparser.add_argument("--lambda_critic", type=float, default=0)
 argparser.add_argument("--lambda_gp", type=float, default=0)
@@ -312,7 +312,6 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
                 hidden_from_src_enc.append(cur_hidden)
             else:
                 raise NotImplementedError
-
             cur_output = classifiers[src_i](cur_hidden)
             outputs_dst_transfer.append(cur_output)
 
@@ -447,6 +446,7 @@ def train(args):
     classifiers = []
     attn_mats = []
     for source in source_train_sets:
+
         classifier = nn.Sequential(
             nn.Linear(encoders_src[0].n_out, 64),
             nn.ReLU(),
@@ -528,6 +528,7 @@ def train(args):
         if min_loss_val is None or min_loss_val > metrics_val[0]:
             print("change val loss from {} to {}".format(min_loss_val, metrics_val[0]))
             min_loss_val = metrics_val[0]
+            best_test_results = metrics_test
             torch.save([classifiers, attn_mats],
                        os.path.join(model_dir, "{}_{}_moe_simple_attn_best_now.mdl".format(args.test, args.base_model)))
         say("\n")
@@ -538,6 +539,114 @@ def train(args):
         min_loss_val, best_test_results[1] * 100, best_test_results[2] * 100,
                       best_test_results[3] * 100, best_test_results[4] * 100
     )))
+
+
+def train_moe_deep_stack(args):
+    save_model_dir = os.path.join(settings.OUT_DIR, args.test)
+    classifiers, attn_mats = torch.load(
+        os.path.join(save_model_dir, "{}_{}_moe_best_now.mdl".format(args.test, args.base_model)))
+    print("base model", args.base_model)
+    print("classifier", classifiers[0])
+
+    source_train_sets = args.train.split(',')
+    pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+
+    encoders_src = []
+    for src_i in range(len(source_train_sets)):
+        cur_model_dir = os.path.join(settings.OUT_DIR, source_train_sets[src_i])
+
+        if args.base_model == "cnn":
+            encoder_class = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
+                                          mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
+                                          mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
+                                          mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
+                                          mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
+        elif args.base_model == "rnn":
+            encoder_class = BiLSTM(pretrain_emb=pretrain_emb,
+                                   vocab_size=args.max_vocab_size,
+                                   embedding_size=args.embedding_size,
+                                   hidden_size=args.hidden_size,
+                                   dropout=args.dropout)
+        else:
+            raise NotImplementedError
+        if args.cuda:
+            encoder_class.load_state_dict(
+                torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model))))
+        else:
+            encoder_class.load_state_dict(
+                torch.load(os.path.join(cur_model_dir, "{}-match-best-now.mdl".format(args.base_model)),
+                           map_location=torch.device('cpu')))
+
+        encoders_src.append(encoder_class)
+
+    map(lambda m: m.eval(), encoders_src + classifiers + attn_mats)
+
+    if args.cuda:
+        map(lambda m: m.cuda(), classifiers + encoders_src + attn_mats)
+
+    if args.base_model == "cnn":
+        train_dataset_dst = ProcessedCNNInputDataset(args.test, "train")
+        valid_dataset = ProcessedCNNInputDataset(args.test, "valid")
+        test_dataset = ProcessedCNNInputDataset(args.test, "test")
+    elif args.base_model == "rnn":
+        train_dataset_dst = ProcessedRNNInputDataset(args.test, "train")
+        valid_dataset = ProcessedRNNInputDataset(args.test, "valid")
+        test_dataset = ProcessedRNNInputDataset(args.test, "test")
+    else:
+        raise NotImplementedError
+
+    train_loader_dst = data.DataLoader(
+        train_dataset_dst,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0
+    )
+
+    valid_loader = data.DataLoader(
+        valid_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0
+    )
+
+    test_loader = data.DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=0
+    )
+    say("Corpus loaded.\n")
+
+    meta_features = np.empty(shape=(0, 192 + 2 * 8))
+    meta_labels = []
+    n_sources = len(encoders_src)
+    encoders = encoders_src
+
+    if args.base_model == "cnn":
+        for batch1, batch2, label in train_loader_dst:
+            if args.cuda:
+                batch1 = batch1.cuda()
+                batch2 = batch2.cuda()
+                label = label.cuda()
+
+            outputs_dst_transfer = []
+            hidden_from_src_enc = []
+            for src_i in range(n_sources):
+                _, cur_hidden = encoders[src_i](batch1, batch2)
+                hidden_from_src_enc.append(cur_hidden)
+                cur_output = classifiers[src_i](cur_hidden)
+                outputs_dst_transfer.append(cur_output)
+
+            source_ids = range(n_sources)
+            support_ids = [x for x in source_ids]  # experts
+
+            source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+
+            support_alphas = [source_alphas[x] for x in support_ids]
+            support_alphas = softmax(support_alphas)
+            source_alphas = softmax(source_alphas)  # [ 32, 32, 32 ]
+            alphas = source_alphas
+
 
 
 if __name__ == "__main__":

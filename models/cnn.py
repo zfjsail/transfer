@@ -21,8 +21,8 @@ class CNNMatchModel(nn.Module):
         self.fc2_1 = nn.Linear(self.mat2_flatten_dim, mat2_hidden)
         print("hidden dim", mat1_hidden + mat2_hidden)
 
-        self.n_d = 1024
-        self.n_out = 1024
+        self.n_d = 128
+        self.n_out = 128
 
         self.fc_out = nn.Linear(mat1_hidden+mat2_hidden, 2)
 
@@ -40,7 +40,7 @@ class CNNMatchModel(nn.Module):
         hidden2 = self.fc2_1(mat2)
 
         hidden = torch.cat((hidden1, hidden2), 1)
-        out = self.fc_out(hidden)
+        out = self.fc_out(F.relu(hidden))
         # return F.log_softmax(out, dim=1), F.softmax(out, dim=1)
         return F.log_softmax(out, dim=1), hidden
 
