@@ -530,6 +530,7 @@ def train(args):
             torch.save([classifiers, attn_mats],
                        os.path.join(model_dir, "{}_{}_moe_simple_attn_best_now.mdl".format(args.test, args.base_model)))
         say("\n")
+        writer.flush()
 
     say(colored("Min valid loss: {:.4f}, best test results, "
                 "AUC: {:.2f}, Prec: {:.2f}, Rec: {:.2f}, F1: {:.2f}\n".format(
@@ -540,3 +541,4 @@ def train(args):
 
 if __name__ == "__main__":
     train(args)
+    writer.close()
