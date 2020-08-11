@@ -14,6 +14,9 @@ import _pickle
 import nltk
 import argparse
 from torch.utils.data import Dataset
+import torch
+from sklearn.metrics.pairwise import cosine_similarity
+
 
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.model_selection import train_test_split
@@ -32,12 +35,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')  # inc
 
 class VenueCNNMatchDataset(Dataset):
 
-    def __init__(self, file_dir, matrix_size1, matrix_size2, seed, shuffle, args):
+    def __init__(self, file_dir, matrix_size1, matrix_size2, seed, shuffle, args, use_emb=True):
 
         self.file_dir = file_dir
 
         self.matrix_size_1_long = matrix_size1
         self.matrix_size_2_short = matrix_size2
+
+        self.use_emb = use_emb
+        if self.use_emb:
+            self.pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+        self.tokenizer = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         self.train_data = json.load(open(join(settings.VENUE_DATA_DIR, 'train.txt'), 'r'))
         self.mag = [nltk.word_tokenize(p[1]) for p in self.train_data]
@@ -53,7 +61,7 @@ class VenueCNNMatchDataset(Dataset):
         count = 0
         for i, cur_y in enumerate(self.labels):
             if i % 100 == 0:
-                logger.info('pairs to matrices %d', i)
+                print('pairs to matrices', i)
             v1 = self.mag[i]
             v1 = " ".join([str(v) for v in v1])
             v2 = self.aminer[i]
@@ -63,8 +71,10 @@ class VenueCNNMatchDataset(Dataset):
             v2_key = self.aminer_venue_keywords[i]
             v2_key = " ".join([str(v) for v in v2_key])
             matrix1 = self.sentences_long_to_matrix(v1, v2)
+            # print("mat1", matrix1)
             self.X_long[count] = feature_utils.scale_matrix(matrix1)
             matrix2 = self.sentences_short_to_matrix(v1_key, v2_key)
+            # print("mat2", matrix2)
             self.X_short[count] = feature_utils.scale_matrix(matrix2)
             self.Y[count] = cur_y
             count += 1
@@ -113,24 +123,46 @@ class VenueCNNMatchDataset(Dataset):
         return self.X_long[idx], self.X_short[idx], self.Y[idx]
 
     def sentences_long_to_matrix(self, title1, title2):
-        twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
-        twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
+        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
+        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
+
+        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_1_long]
+        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_1_long]
 
         matrix = -np.ones((self.matrix_size_1_long, self.matrix_size_1_long))
         for i, word1 in enumerate(twords1):
             for j, word2 in enumerate(twords2):
-                matrix[i][j] = (1 if word1 == word2 else -1)
+                # matrix[i][j] = (1 if word1 == word2 else -1)
+                v = -1
+                if word1 == word2:
+                    v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[word1].reshape(1, -1),
+                                          self.pretrain_emb[word2].reshape(1, -1))[0][0]
+                    # print("cos", v)
+                matrix[i][j] = v
         return matrix
 
     def sentences_short_to_matrix(self, title1, title2):
         # print("short---", title1, "v.s.", title2)
-        twords1 = feature_utils.get_words(title1)[: self.matrix_size_2_short]
-        twords2 = feature_utils.get_words(title2)[: self.matrix_size_2_short]
+        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_2_short]
+        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_2_short]
+
+        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_2_short]
+        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_2_short]
 
         matrix = -np.ones((self.matrix_size_2_short, self.matrix_size_2_short))
         for i, word1 in enumerate(twords1):
             for j, word2 in enumerate(twords2):
-                matrix[i][j] = (1 if word1 == word2 else -1)
+                # matrix[i][j] = (1 if word1 == word2 else -1)
+                v = -1
+                if word1 == word2:
+                    v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[word1].reshape(1, -1),
+                                          self.pretrain_emb[word2].reshape(1, -1))[0][0]
+                    # print("cos", v)
+                matrix[i][j] = v
         return matrix
 
     def calc_keyword_seqs(self):
@@ -403,6 +435,6 @@ if __name__ == "__main__":
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    # dataset = VenueCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=False, args=args)
-    dataset = VenueRNNMatchDataset(args.file_dir, args.max_sequence_length,
-                              args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    dataset = VenueCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=False, args=args)
+    # dataset = VenueRNNMatchDataset(args.file_dir, args.max_sequence_length,
+    #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)

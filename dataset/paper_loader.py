@@ -56,7 +56,7 @@ class CNNMatchDataset(Dataset):
         count = 0
         for i, pair in enumerate(pairs):
             if i % 100 == 0:
-                logger.info('pairs to matrices %d', i)
+                print('pairs to matrices', i)
             cpaper, npaper = pair
             cur_y = labels[i]
             matrix1 = self.titles_to_matrix(cpaper['title'], npaper['title'])
