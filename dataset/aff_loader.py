@@ -56,7 +56,7 @@ class AffCNNMatchDataset(Dataset):
         count = 0
         for i, pair in enumerate(pairs):
             if i % 100 == 0:
-                logger.info('pairs to matrices %d', i)
+                print('pairs to matrices', i)
             item_a, item_m = pair
             cur_y = labels[i]
             matrix1 = self.sentences_long_to_matrix(item_a['name'], item_m['DisplayName'])
