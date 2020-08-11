@@ -60,9 +60,11 @@ class AffCNNMatchDataset(Dataset):
             item_a, item_m = pair
             cur_y = labels[i]
             matrix1 = self.sentences_long_to_matrix(item_a['name'], item_m['DisplayName'])
+            # print("matrix1", matrix1)
             self.X_long[count] = feature_utils.scale_matrix(matrix1)
             # matrix2 = self.sentences_short_to_matrix(item_a['main_body'], item_m['NormalizedName'])
             matrix2 = self.sentences_short_to_matrix_2(item_a['name'], item_m['DisplayName'])
+            # print("matrix2", matrix2)
             self.X_short[count] = feature_utils.scale_matrix(matrix2)
             self.Y[count] = cur_y
             count += 1
