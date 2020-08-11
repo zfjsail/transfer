@@ -61,6 +61,8 @@ class AffCNNMatchDataset(Dataset):
             cur_y = labels[i]
             matrix1 = self.sentences_long_to_matrix(item_a['name'], item_m['DisplayName'])
             # print("matrix1", matrix1)
+            # print(item_a['name'])
+            # print(item_m['DisplayName'])
             self.X_long[count] = feature_utils.scale_matrix(matrix1)
             # matrix2 = self.sentences_short_to_matrix(item_a['main_body'], item_m['NormalizedName'])
             matrix2 = self.sentences_short_to_matrix_2(item_a['name'], item_m['DisplayName'])
@@ -118,11 +120,15 @@ class AffCNNMatchDataset(Dataset):
         return self.X_long[idx], self.X_short[idx], self.Y[idx]
 
     def sentences_long_to_matrix(self, title1, title2):
-        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
-        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
-        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_1_long]
-        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_1_long]
+
+        if self.use_emb:
+            twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_1_long]
+            twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_1_long]
+        else:
+            twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
+            twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
         # print("twords1", twords1)
+        # print("twords2", twords2)
 
         matrix = -np.ones((self.matrix_size_1_long, self.matrix_size_1_long))
         for i, word1 in enumerate(twords1):
@@ -152,8 +158,12 @@ class AffCNNMatchDataset(Dataset):
 
     def sentences_short_to_matrix_2(self, title1, title2):
 
-        twords1 = self.tokenizer.texts_to_sequences([title1])[0]
-        twords2 = self.tokenizer.texts_to_sequences([title2])[0]
+        if self.use_emb:
+            twords1 = self.tokenizer.texts_to_sequences([title1])[0]
+            twords2 = self.tokenizer.texts_to_sequences([title2])[0]
+        else:
+            twords1 = title1.split()
+            twords2 = title2.split()
 
         # title1 = title1.split()
         # title2 = title2.split()
@@ -286,6 +296,6 @@ if __name__ == "__main__":
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args)
+    dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args, use_emb=False)
     # dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
     #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
