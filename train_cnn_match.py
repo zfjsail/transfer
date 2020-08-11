@@ -44,8 +44,8 @@ parser.add_argument('--mat2-hidden', type=int, default=64, help='Matrix2 hidden 
 parser.add_argument('--build-index-window', type=int, default=5, help='Matrix2 hidden dim')
 parser.add_argument('--seed', type=int, default=42, help='Random seed.')
 parser.add_argument('--seed-delta', type=int, default=0, help='Random seed.')
-parser.add_argument('--epochs', type=int, default=500, help='Number of epochs to train.')
-parser.add_argument('--lr', type=float, default=5e-3, help='Initial learning rate.')
+parser.add_argument('--epochs', type=int, default=1000, help='Number of epochs to train.')
+parser.add_argument('--lr', type=float, default=1e-3, help='Initial learning rate.')
 parser.add_argument('--initial-accumulator-value', type=float, default=0.01, help='Initial accumulator value.')
 parser.add_argument('--weight-decay', type=float, default=1e-3,
                     help='Weight decay (L2 loss on parameters).')
@@ -225,7 +225,7 @@ def main(args=args):
     # torch.save(model.state_dict(), join(model_dir, 'paper-matching-cnn.mdl'))
     # logger.info('paper matching CNN model saved')
 
-    logger.info("min valid loss {:.4f}, best test metrics: AUC: {:.2f}, Prec: {:.4f}, Rec: {:.4f}, F1: {:.4f}".format(
+    print("min valid loss {:.4f}, best test metrics: AUC: {:.2f}, Prec: {:.4f}, Rec: {:.4f}, F1: {:.4f}".format(
         min_loss_val, best_test_metrics[1], best_test_metrics[2], best_test_metrics[3], best_test_metrics[4]
     ))
 
