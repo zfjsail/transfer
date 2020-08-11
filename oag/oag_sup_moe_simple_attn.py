@@ -35,6 +35,7 @@ from msda_src.utils.op import softmax
 from dataset import ProcessedCNNInputDataset, ProcessedRNNInputDataset
 from models.cnn import CNNMatchModel
 from models.rnn import BiLSTM
+from models.attn import MulInteractAttention
 
 from utils import settings
 
@@ -150,9 +151,10 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             support_ids = [x for x in source_ids]  # experts
 
             # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-            source_alphas = [
-                torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
-                for j in source_ids]
+            # source_alphas = [
+            #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
+            #     for j in source_ids]
+            source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -206,9 +208,10 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             support_ids = [x for x in source_ids]  # experts
 
             # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-            source_alphas = [
-                torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
-                for j in source_ids]
+            # source_alphas = [
+            #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
+            #     for j in source_ids]
+            source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -339,7 +342,8 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
         support_ids = [x for x in source_ids]  # experts
 
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-        source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
+        source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+        # source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
 
         # print("source alphas", source_alphas[0].size())
 
@@ -442,6 +446,7 @@ def train(args):
 
     args = argparser.parse_args()
     say(args)
+    print()
 
     say("Transferring from %s to %s\n" % (args.train, args.test))
 
@@ -493,7 +498,8 @@ def train(args):
         )
         attn_mats.append(
             # nn.Linear(encoders_src[0].n_out, 1)
-            nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
+            # nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
+            MulInteractAttention(encoders_src[0].n_out, 16)
         )
         classifiers.append(classifier)
     print("classifier build", classifiers[0])
