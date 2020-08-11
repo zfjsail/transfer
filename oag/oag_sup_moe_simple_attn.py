@@ -62,7 +62,7 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
-argparser.add_argument("--base_model", type=str, default="rnn")
+argparser.add_argument("--base_model", type=str, default="cnn")
 argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
