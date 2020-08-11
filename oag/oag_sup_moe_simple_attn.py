@@ -44,7 +44,7 @@ warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
-argparser.add_argument("--train", type=str, default="aff,author,paper",
+argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
 argparser.add_argument("--test", type=str, default="venue",
                        help="target domain for testing")
@@ -62,7 +62,7 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
-argparser.add_argument("--base_model", type=str, default="cnn")
+argparser.add_argument("--base_model", type=str, default="rnn")
 argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
@@ -110,6 +110,8 @@ class HLoss(nn.Module):
 
 
 def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_thrs, args, thr=None):
+    encoders, encoder_dst = encoders
+
     map(lambda m: m.eval(), encoders + classifiers + attn_mats)
 
     oracle_correct = 0
@@ -134,6 +136,8 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             batch2 = Variable(batch2)
             bs = len(batch1)
 
+            _, hidden_from_dst_enc = encoder_dst(batch1, batch2)
+
             outputs_dst_transfer = []
             hidden_from_src_enc = []
             for src_i in range(n_sources):
@@ -145,7 +149,10 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             source_ids = range(n_sources)
             support_ids = [x for x in source_ids]  # experts
 
-            source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+            source_alphas = [
+                torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
+                for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -185,6 +192,8 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
 
             bs = len(batch1)
 
+            _, hidden_from_dst_enc = encoder_dst(batch1, batch2, batch3, batch4)
+
             outputs_dst_transfer = []
             hidden_from_src_enc = []
             for src_i in range(n_sources):
@@ -196,7 +205,10 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             source_ids = range(n_sources)
             support_ids = [x for x in source_ids]  # experts
 
-            source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+            source_alphas = [
+                torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
+                for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -271,6 +283,8 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
 
 def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, args, optim_model, epoch):
 
+    encoders, encoder_dst = encoders
+
     map(lambda m: m.train(), classifiers + encoders + attn_mats)
 
     moe_criterion = nn.NLLLoss()  # with log_softmax separated
@@ -298,6 +312,13 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
                 batch3 = batch3.cuda()
                 batch4 = batch4.cuda()
 
+        if args.base_model == "cnn":
+            _, hidden_from_dst_enc = encoder_dst(batch1, batch2)
+        elif args.base_model == "rnn":
+            _, hidden_from_dst_enc = encoder_dst(batch1, batch2, batch3, batch4)
+        else:
+            raise NotImplementedError
+
         outputs_dst_transfer = []
         hidden_from_src_enc = []
         for src_i in range(n_sources):
@@ -317,7 +338,10 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
         source_ids = range(n_sources)
         support_ids = [x for x in source_ids]  # experts
 
-        source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+        # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+        source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
+
+        # print("source alphas", source_alphas[0].size())
 
         support_alphas = [source_alphas[x] for x in support_ids]
         support_alphas = softmax(support_alphas)
@@ -400,6 +424,22 @@ def train(args):
 
         encoders_src.append(encoder_class)
 
+    dst_pretrain_dir = os.path.join(settings.OUT_DIR, args.test)
+    if args.base_model == "cnn":
+        encoder_dst_pretrain = CNNMatchModel(input_matrix_size1=args.matrix_size1, input_matrix_size2=args.matrix_size2,
+                                             mat1_channel1=args.mat1_channel1, mat1_kernel_size1=args.mat1_kernel_size1,
+                                             mat1_channel2=args.mat1_channel2, mat1_kernel_size2=args.mat1_kernel_size2,
+                                             mat1_hidden=args.mat1_hidden, mat2_channel1=args.mat2_channel1,
+                                             mat2_kernel_size1=args.mat2_kernel_size1, mat2_hidden=args.mat2_hidden)
+    elif args.base_model == "rnn":
+        encoder_dst_pretrain = BiLSTM(pretrain_emb=pretrain_emb,
+                                      vocab_size=args.max_vocab_size,
+                                      embedding_size=args.embedding_size,
+                                      hidden_size=args.hidden_size,
+                                      dropout=args.dropout)
+    else:
+        raise NotImplementedError
+
     args = argparser.parse_args()
     say(args)
 
@@ -452,7 +492,8 @@ def train(args):
             nn.Linear(16, 2),
         )
         attn_mats.append(
-            nn.Linear(encoders_src[0].n_out, 1)
+            # nn.Linear(encoders_src[0].n_out, 1)
+            nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
         )
         classifiers.append(classifier)
     print("classifier build", classifiers[0])
@@ -496,7 +537,7 @@ def train(args):
 
         iter_cnt = train_epoch(
             iter_cnt,
-            encoders_src, classifiers, attn_mats,
+            [encoders_src, encoder_dst_pretrain], classifiers, attn_mats,
             train_loader_dst,
             args,
             optim_model,
@@ -505,7 +546,7 @@ def train(args):
 
         thr, metrics_val = evaluate(
             epoch,
-            encoders_src, classifiers,
+            [encoders_src, encoder_dst_pretrain], classifiers,
             attn_mats,
             valid_loader,
             True,
@@ -514,7 +555,7 @@ def train(args):
 
         _, metrics_test = evaluate(
             epoch,
-            encoders_src, classifiers,
+            [encoders_src, encoder_dst_pretrain], classifiers,
             attn_mats,
             test_loader,
             False,
