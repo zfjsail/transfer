@@ -9,8 +9,8 @@ class BiLSTM(nn.Module):
         self.vocab_size = vocab_size
         # self.msl = max_sequence_length
         self.multiple = multiple
-        self.n_d = 16
-        self.n_out = 16
+        self.n_d = 192
+        self.n_out = 192
 
         # embedding layer
         self.embed_seq = nn.Embedding(self.vocab_size + 1, embedding_size)
@@ -77,4 +77,4 @@ class BiLSTM(nn.Module):
         output_hidden = self.output(concat_input)
         output = self.output_final(output_hidden)
         # output = self.sigmoid(output)
-        return torch.log_softmax(output, dim=1), output_hidden
+        return torch.log_softmax(output, dim=1), concat_input

@@ -7,7 +7,9 @@ import argparse
 import os
 from os.path import join
 import numpy as np
+import torch
 import sklearn
+from sklearn.metrics.pairwise import cosine_similarity
 from torch.utils.data import Dataset
 
 from keras.preprocessing.text import Tokenizer
@@ -25,12 +27,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')  # inc
 
 class AffCNNMatchDataset(Dataset):
 
-    def __init__(self, file_dir, matrix_size1, matrix_size2, seed, shuffle, args):
+    def __init__(self, file_dir, matrix_size1, matrix_size2, seed, shuffle, args, use_emb=True):
 
         self.file_dir = file_dir
 
         self.matrix_size_1_long = matrix_size1
         self.matrix_size_2_short = matrix_size2
+
+        self.use_emb = use_emb
+        if self.use_emb:
+            self.pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+        self.tokenizer = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         # load training pairs
         pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
@@ -109,18 +116,31 @@ class AffCNNMatchDataset(Dataset):
         return self.X_long[idx], self.X_short[idx], self.Y[idx]
 
     def sentences_long_to_matrix(self, title1, title2):
-        twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
-        twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
+        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
+        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
+        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_1_long]
+        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_1_long]
+        # print("twords1", twords1)
 
         matrix = -np.ones((self.matrix_size_1_long, self.matrix_size_1_long))
         for i, word1 in enumerate(twords1):
             for j, word2 in enumerate(twords2):
-                matrix[i][j] = (1 if word1 == word2 else -1)
+                v = -1
+                if word1 == word2:
+                    v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[word1].reshape(1, -1),
+                                          self.pretrain_emb[word2].reshape(1, -1))[0][0]
+                    # print("cos", v)
+                matrix[i][j] = v
         return matrix
 
     def sentences_short_to_matrix(self, title1, title2):
-        twords1 = feature_utils.get_words(title1)[: self.matrix_size_2_short]
-        twords2 = feature_utils.get_words(title2)[: self.matrix_size_2_short]
+        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_2_short]
+        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_2_short]
+
+        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_2_short]
+        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_2_short]
 
         matrix = -np.ones((self.matrix_size_2_short, self.matrix_size_2_short))
         for i, word1 in enumerate(twords1):
@@ -129,16 +149,20 @@ class AffCNNMatchDataset(Dataset):
         return matrix
 
     def sentences_short_to_matrix_2(self, title1, title2):
-        title1 = title1.split()
-        title2 = title2.split()
+
+        twords1 = self.tokenizer.texts_to_sequences([title1])[0]
+        twords2 = self.tokenizer.texts_to_sequences([title2])[0]
+
+        # title1 = title1.split()
+        # title2 = title2.split()
         # print(title1)
-        overlap = set(title1).intersection(title2)
+        overlap = set(twords1).intersection(twords2)
         new_seq_mag = []
         new_seq_aminer = []
-        for w in title1:
+        for w in twords1:
             if w in overlap:
                 new_seq_mag.append(w)
-        for w in title2:
+        for w in twords2:
             if w in overlap:
                 new_seq_aminer.append(w)
 
@@ -148,7 +172,15 @@ class AffCNNMatchDataset(Dataset):
         matrix = -np.ones((self.matrix_size_2_short, self.matrix_size_2_short))
         for i, word1 in enumerate(twords1):
             for j, word2 in enumerate(twords2):
-                matrix[i][j] = (1 if word1 == word2 else -1)
+                v = -1
+                if word1 == word2:
+                    v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[word1].reshape(1, -1),
+                                          self.pretrain_emb[word2].reshape(1, -1))[0][0]
+                    # print("cos", v)
+                matrix[i][j] = v
+                # matrix[i][j] = (1 if word1 == word2 else -1)
         return matrix
 
 

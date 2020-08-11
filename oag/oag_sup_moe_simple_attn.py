@@ -269,9 +269,6 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
     return best_thr, metric
 
 
-
-
-
 def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, args, optim_model, epoch):
 
     map(lambda m: m.train(), classifiers + encoders + attn_mats)
