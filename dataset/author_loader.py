@@ -150,10 +150,12 @@ class CNNMatchDataset(Dataset):
         # twords2 = utils.extract_venue_features(o2)[:max_size].split()
         avenue = [v['id'] for v in o1]
         mvenue = [v['id'] for v in o2]
-
-        avenue = self.tokenizer.texts_to_sequences([" ".join(avenue)])[0][:max_size]
-        # print("avenue", avenue)
-        mvenue = self.tokenizer.texts_to_sequences([" ".join(mvenue)])[0][:max_size]
+        if self.use_emb:
+            avenue = self.tokenizer.texts_to_sequences([" ".join(avenue)])[0][:max_size]
+            # print("avenue", avenue)
+            mvenue = self.tokenizer.texts_to_sequences([" ".join(mvenue)])[0][:max_size]
+        avenue = avenue[: max_size]
+        mvenue = mvenue[: max_size]
 
         matrix = -np.ones((max_size, max_size))
         nn1 = 0
@@ -207,11 +209,13 @@ class CNNMatchDataset(Dataset):
         return matrix
 
     def paper_to_matrix(self, ap, mp, max_size):
-        apubs = self.tokenizer.texts_to_sequences([" ".join(ap)])[0][:max_size]
-        mpubs = self.tokenizer.texts_to_sequences([" ".join(mp)])[0][:max_size]
-        # print("apubs", apubs)
-        # apubs = ap[:max_size]
-        # mpubs = mp[:max_size]
+        if self.use_emb:
+            apubs = self.tokenizer.texts_to_sequences([" ".join(ap)])[0][:max_size]
+            mpubs = self.tokenizer.texts_to_sequences([" ".join(mp)])[0][:max_size]
+            # print("apubs", apubs)
+        else:
+            apubs = ap[:max_size]
+            mpubs = mp[:max_size]
         matrix = -np.ones((max_size, max_size))
         for i, apid in enumerate(apubs):
             # p1_dec = apid + '-p'
@@ -411,6 +415,6 @@ if __name__ == '__main__':
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    dataset = CNNMatchDataset(file_dir=args.file_dir, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, seed=args.seed, shuffle=True, args=args)
+    dataset = CNNMatchDataset(file_dir=args.file_dir, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, seed=args.seed, shuffle=True, args=args, use_emb=False)
     # dataset = AuthorRNNMatchDataset(args.file_dir, args.max_sequence_length,
     #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
