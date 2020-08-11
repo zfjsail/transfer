@@ -45,9 +45,9 @@ warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
-argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
+argparser.add_argument("--train", type=str, default="author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
-argparser.add_argument("--test", type=str, default="venue",
+argparser.add_argument("--test", type=str, default="aff",
                        help="target domain for testing")
 argparser.add_argument("--eval_only", action="store_true")
 argparser.add_argument("--critic", type=str, default="mmd")
