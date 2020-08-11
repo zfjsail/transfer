@@ -10,6 +10,8 @@ from collections import defaultdict as dd
 import numpy as np
 import sklearn
 from torch.utils.data import Dataset
+import torch
+from sklearn.metrics.pairwise import cosine_similarity
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.text import text
@@ -26,13 +28,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')  # inc
 
 class CNNMatchDataset(Dataset):
 
-    def __init__(self, file_dir, matrix_size1, matrix_size2, build_index_window, seed, shuffle, args):
+    def __init__(self, file_dir, matrix_size1, matrix_size2, build_index_window, seed, shuffle, args, use_emb=True):
 
         self.file_dir = file_dir
         self.build_index_window = build_index_window
 
         self.matrix_title_size = matrix_size1
         self.matrix_author_size = matrix_size2
+
+        self.use_emb = use_emb
+        if self.use_emb:
+            self.pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+        self.tokenizer = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         # load training pairs
         pos_pairs = data_utils.load_json(file_dir, 'pos-pairs-train.json')
@@ -53,8 +60,10 @@ class CNNMatchDataset(Dataset):
             cpaper, npaper = pair
             cur_y = labels[i]
             matrix1 = self.titles_to_matrix(cpaper['title'], npaper['title'])
+            # print("mat1", matrix1)
             self.X_title[count] = feature_utils.scale_matrix(matrix1)
             matrix2 = self.authors_to_matrix(cpaper['authors'], npaper['authors'])
+            # print("mat2", matrix2)
             self.X_author[count] = feature_utils.scale_matrix(matrix2)
             self.Y[count] = cur_y
             count += 1
@@ -112,34 +121,59 @@ class CNNMatchDataset(Dataset):
 
 
     def titles_to_matrix(self, title1, title2):
-        twords1 = feature_utils.get_words(title1)[: self.matrix_title_size]
-        twords2 = feature_utils.get_words(title2)[: self.matrix_title_size]
+        # twords1 = feature_utils.get_words(title1)[: self.matrix_title_size]
+        # twords2 = feature_utils.get_words(title2)[: self.matrix_title_size]
+
+        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_title_size]
+        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_title_size]
 
         matrix = -np.ones((self.matrix_title_size, self.matrix_title_size))
         for i, word1 in enumerate(twords1):
             for j, word2 in enumerate(twords2):
-                matrix[i][j] = (1 if word1 == word2 else -1)
+                # matrix[i][j] = (1 if word1 == word2 else -1)
+                v = -1
+                if word1 == word2:
+                    v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[word1].reshape(1, -1),
+                                          self.pretrain_emb[word2].reshape(1, -1))[0][0]
+                    # print("cos", v)
+                matrix[i][j] = v
         return matrix
 
     def authors_to_matrix(self, authors1, authors2):
         matrix = -np.ones((self.matrix_author_size, self.matrix_author_size))
         author_num = int(self.matrix_author_size/2)
-        try:
-            for i in range(author_num):
-                row = 2 * i
-                a1 = authors1[i].lower().split()
-                first_name1 = a1[0][0]
-                last_name1 = a1[-1][0]
-                col = row
-                a2 = authors2[i].lower().split()
-                first_name2 = a2[0][0]
-                last_name2 = a2[-1][0]
-                matrix[row][col] = feature_utils.name_equal(first_name1, first_name2)
-                matrix[row][col+1] = feature_utils.name_equal(first_name1, last_name2)
-                matrix[row+1][col] = feature_utils.name_equal(last_name1, first_name2)
-                matrix[row+1][col+1] = feature_utils.name_equal(last_name1, last_name2)
-        except Exception as e:
-            pass
+        twords1 = self.tokenizer.texts_to_sequences([" ".join(authors1)])[0][: self.matrix_author_size]
+        twords2 = self.tokenizer.texts_to_sequences([" ".join(authors2)])[0][: self.matrix_author_size]
+
+        for i, word1 in enumerate(twords1):
+            for j, word2 in enumerate(twords2):
+                v = -1
+                if word1 == word2:
+                    v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[word1].reshape(1, -1),
+                                          self.pretrain_emb[word2].reshape(1, -1))[0][0]
+                    # print("cos", v)
+                matrix[i][j] = v
+
+        # try:
+        #     for i in range(author_num):
+        #         row = 2 * i
+        #         a1 = authors1[i].lower().split()
+        #         first_name1 = a1[0][0]
+        #         last_name1 = a1[-1][0]
+        #         col = row
+        #         a2 = authors2[i].lower().split()
+        #         first_name2 = a2[0][0]
+        #         last_name2 = a2[-1][0]
+        #         matrix[row][col] = feature_utils.name_equal(first_name1, first_name2)
+        #         matrix[row][col+1] = feature_utils.name_equal(first_name1, last_name2)
+        #         matrix[row+1][col] = feature_utils.name_equal(last_name1, first_name2)
+        #         matrix[row+1][col+1] = feature_utils.name_equal(last_name1, last_name2)
+        # except Exception as e:
+        #     pass
         return matrix
 
     def get_id2cpapers(self):
@@ -292,5 +326,5 @@ if __name__ == '__main__':
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    # dataset = CNNMatchDataset(file_dir=settings.PAPER_DATA_DIR, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, build_index_window=5, seed=args.seed, shuffle=True, args=args)
-    dataset = PaperRNNMatchDataset(args.file_dir, args.max_sequence_length, args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    dataset = CNNMatchDataset(file_dir=settings.PAPER_DATA_DIR, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, build_index_window=5, seed=args.seed, shuffle=True, args=args)
+    # dataset = PaperRNNMatchDataset(args.file_dir, args.max_sequence_length, args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
