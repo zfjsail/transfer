@@ -123,11 +123,12 @@ class VenueCNNMatchDataset(Dataset):
         return self.X_long[idx], self.X_short[idx], self.Y[idx]
 
     def sentences_long_to_matrix(self, title1, title2):
-        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
-        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
-
-        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_1_long]
-        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_1_long]
+        if self.use_emb:
+            twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_1_long]
+            twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_1_long]
+        else:
+            twords1 = feature_utils.get_words(title1)[: self.matrix_size_1_long]
+            twords2 = feature_utils.get_words(title2)[: self.matrix_size_1_long]
 
         matrix = -np.ones((self.matrix_size_1_long, self.matrix_size_1_long))
         for i, word1 in enumerate(twords1):
@@ -145,11 +146,12 @@ class VenueCNNMatchDataset(Dataset):
 
     def sentences_short_to_matrix(self, title1, title2):
         # print("short---", title1, "v.s.", title2)
-        # twords1 = feature_utils.get_words(title1)[: self.matrix_size_2_short]
-        # twords2 = feature_utils.get_words(title2)[: self.matrix_size_2_short]
-
-        twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_2_short]
-        twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_2_short]
+        if self.use_emb:
+            twords1 = self.tokenizer.texts_to_sequences([title1])[0][: self.matrix_size_2_short]
+            twords2 = self.tokenizer.texts_to_sequences([title2])[0][: self.matrix_size_2_short]
+        else:
+            twords1 = feature_utils.get_words(title1)[: self.matrix_size_2_short]
+            twords2 = feature_utils.get_words(title2)[: self.matrix_size_2_short]
 
         matrix = -np.ones((self.matrix_size_2_short, self.matrix_size_2_short))
         for i, word1 in enumerate(twords1):
@@ -435,6 +437,6 @@ if __name__ == "__main__":
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    dataset = VenueCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=False, args=args)
+    dataset = VenueCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=False, args=args, use_emb=False)
     # dataset = VenueRNNMatchDataset(args.file_dir, args.max_sequence_length,
     #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
