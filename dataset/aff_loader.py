@@ -45,9 +45,9 @@ class AffCNNMatchDataset(Dataset):
         neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
         neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
         n_pos = len(pos_pairs)
-        labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
-        # pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
-        pairs = pos_pairs + neg_pairs  # label balanced is important
+        labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
+        pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
+        # pairs = pos_pairs + neg_pairs  # label balanced is important
 
         n_matrix = len(pairs)
         self.X_long = np.zeros((n_matrix, self.matrix_size_1_long, self.matrix_size_1_long))
