@@ -9,7 +9,9 @@ from os.path import join
 from collections import defaultdict as dd
 import numpy as np
 import sklearn
+import torch
 from torch.utils.data import Dataset
+from sklearn.metrics.pairwise import cosine_similarity
 
 from keras.preprocessing.text import Tokenizer
 from keras.preprocessing.text import text
@@ -26,7 +28,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')  # inc
 
 class CNNMatchDataset(Dataset):
 
-    def __init__(self, file_dir, matrix_size1, matrix_size2, seed, shuffle, args):
+    def __init__(self, file_dir, matrix_size1, matrix_size2, seed, shuffle, args, use_emb=True):
 
         self.file_dir = file_dir
 
@@ -42,6 +44,11 @@ class CNNMatchDataset(Dataset):
 
         self.person_dict = data_utils.load_json(file_dir, "ego_person_dict.json")
 
+        self.use_emb = use_emb
+        if self.use_emb:
+            self.pretrain_emb = torch.load(os.path.join(settings.OUT_DIR, "rnn_init_word_emb.emb"))
+        self.tokenizer = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
+
         X_long = []
         X_short = []
         nn_pos = 0
@@ -55,10 +62,12 @@ class CNNMatchDataset(Dataset):
             mperson = self.person_dict.get(mid, {})
             # matrix1, nn1 = self.org_to_matrix(aperson.get('org', ''), mperson.get('org', ''), matrix_size1)
             matrix1, nn1 = self.paper_to_matrix(aperson.get('pubs', []), mperson.get('pubs', []), matrix_size1)
+            # print("matrix1", matrix1)
 
             matrix1 = feature_utils.scale_matrix(matrix1)
             X_long.append(matrix1)
             matrix2, nn2 = self.venue_to_matrix(aperson.get('venue', ''), mperson.get('venue', ''), matrix_size2)
+            # print("matrix2", matrix2)
             matrix2 = feature_utils.scale_matrix(matrix2)
             X_short.append(matrix2)
             # if y[i][0] == 1:
@@ -139,18 +148,27 @@ class CNNMatchDataset(Dataset):
     def venue_to_matrix(self, o1, o2, max_size):
         # twords1 = utils.extract_venue_features(o1)[:max_size].split()
         # twords2 = utils.extract_venue_features(o2)[:max_size].split()
-        avenue = [v['id'] for v in o1][:max_size]
-        mvenue = [v['id'] for v in o2][:max_size]
+        avenue = [v['id'] for v in o1]
+        mvenue = [v['id'] for v in o2]
+
+        avenue = self.tokenizer.texts_to_sequences([" ".join(avenue)])[0][:max_size]
+        # print("avenue", avenue)
+        mvenue = self.tokenizer.texts_to_sequences([" ".join(mvenue)])[0][:max_size]
+
         matrix = -np.ones((max_size, max_size))
         nn1 = 0
         for i, avid in enumerate(avenue):
-            v1_dec = avid + '-v'
+            # v1_dec = avid + '-v'
             # emb1 = lc.get(v1_dec)
             for j, mvid in enumerate(mvenue):
                 v = -1
                 if avid == mvid:
                     v = 1
                     nn1 += 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[avid].reshape(1, -1),
+                                      self.pretrain_emb[mvid].reshape(1, -1))[0][0]
+                    # print("v", v)
                 # elif emb1 is None:
                 #     continue
                 # else:
@@ -189,16 +207,23 @@ class CNNMatchDataset(Dataset):
         return matrix
 
     def paper_to_matrix(self, ap, mp, max_size):
-        apubs = ap[:max_size]
-        mpubs = mp[:max_size]
+        apubs = self.tokenizer.texts_to_sequences([" ".join(ap)])[0][:max_size]
+        mpubs = self.tokenizer.texts_to_sequences([" ".join(mp)])[0][:max_size]
+        # print("apubs", apubs)
+        # apubs = ap[:max_size]
+        # mpubs = mp[:max_size]
         matrix = -np.ones((max_size, max_size))
         for i, apid in enumerate(apubs):
-            p1_dec = apid + '-p'
+            # p1_dec = apid + '-p'
             # emb1 = lc.get(p1_dec)
             for j, mpid in enumerate(mpubs):
                 v = -1
                 if apid == mpid:
                     v = 1
+                elif self.use_emb:
+                    v = cosine_similarity(self.pretrain_emb[apid].reshape(1, -1),
+                                      self.pretrain_emb[mpid].reshape(1, -1))[0][0]
+                    # print("v", v)
                 # elif emb1 is None:
                 #     continue
                 # else:
@@ -386,6 +411,6 @@ if __name__ == '__main__':
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    # dataset = CNNMatchDataset(file_dir=args.file_dir, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, seed=args.seed, shuffle=True, args=args)
-    dataset = AuthorRNNMatchDataset(args.file_dir, args.max_sequence_length,
-                              args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    dataset = CNNMatchDataset(file_dir=args.file_dir, matrix_size1=args.matrix_size1, matrix_size2=args.matrix_size2, seed=args.seed, shuffle=True, args=args)
+    # dataset = AuthorRNNMatchDataset(args.file_dir, args.max_sequence_length,
+    #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
