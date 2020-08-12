@@ -47,7 +47,7 @@ argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-So
 argparser.add_argument("--cuda", action="store_true")
 argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
-argparser.add_argument("--test", type=str, default="aff",
+argparser.add_argument("--test", type=str, default="venue",
                        help="target domain for testing")
 argparser.add_argument("--eval_only", action="store_true")
 argparser.add_argument("--critic", type=str, default="mmd")
@@ -156,12 +156,12 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             support_ids = [x for x in source_ids]  # experts
 
             # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-            # source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+            source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
 
             # source_alphas = [
             #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
             #     for j in source_ids]
-            source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -205,11 +205,16 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
 
             outputs_dst_transfer = []
             hidden_from_src_enc = []
+            one_hot_sources = []
+
             for src_i in range(n_sources):
                 _, cur_hidden = encoders[src_i](batch1, batch2, batch3, batch4)
                 hidden_from_src_enc.append(cur_hidden)
                 cur_output = classifiers[src_i](cur_hidden)
                 outputs_dst_transfer.append(cur_output)
+                cur_one_hot_sources = torch.zeros(size=(bs, n_sources))
+                cur_one_hot_sources[:, src_i] = 1
+                one_hot_sources.append(cur_one_hot_sources)
 
             source_ids = range(n_sources)
             support_ids = [x for x in source_ids]  # experts
@@ -218,7 +223,8 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             # source_alphas = [
             #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
             #     for j in source_ids]
-            source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+            source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -355,9 +361,9 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
         support_ids = [x for x in source_ids]  # experts
 
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-        # source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+        source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
 
-        source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+        # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
         # source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
 
         # print("source alphas", source_alphas[0].size())
@@ -511,15 +517,15 @@ def train(args):
             nn.ReLU(),
             nn.Linear(16, 2),
         )
-        cur_att_weight = nn.Linear(len(encoders_src), 1, bias=False)
+        cur_att_weight = nn.Linear(len(encoders_src), 1, bias=True)
         # nn.init.uniform_(cur_att_weight.weight)
         # print(cur_att_weight)
         cur_att_weight.weight = nn.Parameter(torch.ones(size=(1, len(encoders_src))), requires_grad=True)
         attn_mats.append(
             # nn.Linear(encoders_src[0].n_out, 1)
-            # cur_att_weight
+            cur_att_weight
             # nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
-            MulInteractAttention(encoders_src[0].n_out, 16)
+            # MulInteractAttention(encoders_src[0].n_out, 16)
         )
         classifiers.append(classifier)
     print("classifier build", classifiers[0])
