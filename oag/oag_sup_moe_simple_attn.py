@@ -511,9 +511,13 @@ def train(args):
             nn.ReLU(),
             nn.Linear(16, 2),
         )
+        cur_att_weight = nn.Linear(len(encoders_src), 1, bias=False)
+        # nn.init.uniform_(cur_att_weight.weight)
+        # print(cur_att_weight)
+        cur_att_weight.weight = nn.Parameter(torch.ones(size=(1, len(encoders_src))), requires_grad=True)
         attn_mats.append(
             # nn.Linear(encoders_src[0].n_out, 1)
-            nn.Linear(len(encoders_src), 1, bias=False)
+            cur_att_weight
             # nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
             # MulInteractAttention(encoders_src[0].n_out, 16)
         )
