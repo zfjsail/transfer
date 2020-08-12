@@ -45,7 +45,7 @@ warnings.filterwarnings("ignore")
 
 argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-Source Domains")
 argparser.add_argument("--cuda", action="store_true")
-argparser.add_argument("--train", type=str, default="author,paper,venue",
+argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
 argparser.add_argument("--test", type=str, default="aff",
                        help="target domain for testing")
@@ -63,7 +63,7 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
-argparser.add_argument("--base_model", type=str, default="rnn")
+argparser.add_argument("--base_model", type=str, default="cnn")
 argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
@@ -141,20 +141,27 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
 
             outputs_dst_transfer = []
             hidden_from_src_enc = []
+            one_hot_sources = []
+
             for src_i in range(n_sources):
                 _, cur_hidden = encoders[src_i](batch1, batch2)
                 hidden_from_src_enc.append(cur_hidden)
                 cur_output = classifiers[src_i](cur_hidden)
                 outputs_dst_transfer.append(cur_output)
+                cur_one_hot_sources = torch.zeros(size=(bs, n_sources))
+                cur_one_hot_sources[:, src_i] = 1
+                one_hot_sources.append(cur_one_hot_sources)
 
             source_ids = range(n_sources)
             support_ids = [x for x in source_ids]  # experts
 
             # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
+            source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+
             # source_alphas = [
             #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
             #     for j in source_ids]
-            source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -305,6 +312,8 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
         else:
             raise NotImplementedError
 
+        bs = len(label)
+
         iter_cnt += 1
         n_batch += 1
         if args.cuda:
@@ -324,6 +333,7 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
 
         outputs_dst_transfer = []
         hidden_from_src_enc = []
+        one_hot_sources = []
         for src_i in range(n_sources):
             if args.base_model == "cnn":
                 _, cur_hidden = encoders[src_i](batch1, batch2)
@@ -335,6 +345,9 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
                 raise NotImplementedError
             cur_output = classifiers[src_i](cur_hidden)
             outputs_dst_transfer.append(cur_output)
+            cur_one_hot_sources = torch.zeros(size=(bs, n_sources))
+            cur_one_hot_sources[:, src_i] = 1
+            one_hot_sources.append(cur_one_hot_sources)
 
         optim_model.zero_grad()
 
@@ -342,7 +355,9 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
         support_ids = [x for x in source_ids]  # experts
 
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-        source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+        source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+
+        # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
         # source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
 
         # print("source alphas", source_alphas[0].size())
@@ -498,8 +513,9 @@ def train(args):
         )
         attn_mats.append(
             # nn.Linear(encoders_src[0].n_out, 1)
+            nn.Linear(len(encoders_src), 1, bias=False)
             # nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
-            MulInteractAttention(encoders_src[0].n_out, 16)
+            # MulInteractAttention(encoders_src[0].n_out, 16)
         )
         classifiers.append(classifier)
     print("classifier build", classifiers[0])
