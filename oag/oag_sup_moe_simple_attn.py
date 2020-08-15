@@ -47,7 +47,7 @@ argparser = argparse.ArgumentParser(description="Learning to Adapt from Multi-So
 argparser.add_argument("--cuda", action="store_true")
 argparser.add_argument("--train", type=str, default="aff,author,paper,venue",
                        help="multi-source domains for training, separated with (,)")
-argparser.add_argument("--test", type=str, default="venue",
+argparser.add_argument("--test", type=str, default="aff",
                        help="target domain for testing")
 argparser.add_argument("--eval_only", action="store_true")
 argparser.add_argument("--critic", type=str, default="mmd")
@@ -354,19 +354,20 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
             cur_one_hot_sources = torch.zeros(size=(bs, n_sources))
             cur_one_hot_sources[:, src_i] = 1
             one_hot_sources.append(cur_one_hot_sources)
+        # print("one hot sources", one_hot_sources)
 
         optim_model.zero_grad()
 
         source_ids = range(n_sources)
         support_ids = [x for x in source_ids]  # experts
-
+        # print("attn mats", attn_mats)
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
         source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
 
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
         # source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
 
-        print("source alphas", source_alphas[0].size(), source_alphas)
+        # print("source alphas", source_alphas[0].size(), source_alphas)
 
         support_alphas = [source_alphas[x] for x in support_ids]
         support_alphas = softmax(support_alphas)
@@ -518,11 +519,11 @@ def train(args):
             nn.Linear(16, 2),
         )
         # cur_att_weight = nn.Linear(len(encoders_src), 1, bias=True)
-        cur_att_weight = nn.Linear(len(encoders_src), 1)
+        cur_att_weight = nn.Linear(len(encoders_src), 1, bias=False)
         # nn.init.uniform_(cur_att_weight.weight)
         # print(cur_att_weight)
         cur_att_weight.weight = nn.Parameter(torch.ones(size=(1, len(encoders_src))), requires_grad=True)
-        print("init cur att weight", cur_att_weight)
+        print("init cur att weight", cur_att_weight.weight)
         attn_mats.append(
             # nn.Linear(encoders_src[0].n_out, 1)
             cur_att_weight
