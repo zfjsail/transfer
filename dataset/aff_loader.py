@@ -214,13 +214,23 @@ class AffRNNMatchDataset(Dataset):
         self.max_seq2_len = max_seq2_len
 
         # load training pairs
-        pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
-        pos_pairs = [(p['aminer_affi'], p['mag_affi']) for p in pos_pairs]
-        neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+        # pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
+        # pos_pairs = [(p['aminer_affi'], p['mag_affi']) for p in pos_pairs]
+        # neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+        # neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
+        # n_pos = len(pos_pairs)
+        pos_pairs = data_utils.load_json(file_dir, "label_data_aff_zhoushao.json")[:600]
+        pos_pairs = [({"name": p["affiliation"]}, {"DisplayName": p["label"]}) for p in pos_pairs if p["label"] != "[NIF]"]
+        # neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+        neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi_clean.json')[:600]
         neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
-        n_pos = len(pos_pairs)
-        self.labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
-        pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
+        pairs_add = data_utils.load_json(file_dir, "mag_aminer_hard_correct_zfj_copy.json")
+        print("add pairs", len(pairs_add))
+        pos_pairs += [(p['aminer_affi'], p['mag_affi']) for p in pairs_add if p["label_zfj"] == "1"]
+        neg_pairs += [(p['aminer_affi'], p['mag_affi']) for p in pairs_add if p["label_zfj"] == "0"]
+
+        self.labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
+        pairs = pos_pairs + neg_pairs  # label balanced is important
 
         # corpus = []
         # for item in pairs:
@@ -244,8 +254,12 @@ class AffRNNMatchDataset(Dataset):
         self.mag = pad_sequences(self.mag, maxlen=self.max_seq1_len)
         self.aminer = pad_sequences(self.aminer, maxlen=self.max_seq1_len)
 
-        self.mag_keywords = t.texts_to_sequences([p[1]["NormalizedName"] for p in pairs])
-        self.aminer_keywords = t.texts_to_sequences([p[0]["main_body"] for p in pairs])
+        # self.mag_keywords = t.texts_to_sequences([p[1]["NormalizedName"] for p in pairs])
+        # self.aminer_keywords = t.texts_to_sequences([p[0]["main_body"] for p in pairs])
+        self.calc_keyword_seqs()
+        # self.mag_keywords = t.texts_to_sequences(self.mag_keywords)
+        # self.aminer_keywords = t.texts_to_sequences(self.aminer_keywords)
+
         self.mag_keywords = pad_sequences(self.mag_keywords, maxlen=max_seq2_len)
         self.aminer_keywords = pad_sequences(self.aminer_keywords, maxlen=max_seq2_len)
 
@@ -290,6 +304,28 @@ class AffRNNMatchDataset(Dataset):
         data_utils.dump_large_obj(train_data, out_dir, "aff_rnn_train.pkl")
         data_utils.dump_large_obj(test_data, out_dir, "aff_rnn_test.pkl")
         data_utils.dump_large_obj(valid_data, out_dir, "aff_rnn_valid.pkl")
+
+    def calc_keyword_seqs(self):
+        N = len(self.mag)
+        mag_keywords = []
+        aminer_keywords = []
+        for i in range(N):
+            cur_v_mag = self.mag[i]
+            cur_v_aminer = self.aminer[i]
+            overlap = set(cur_v_mag).intersection(cur_v_aminer)
+            new_seq_mag = []
+            new_seq_aminer = []
+            for w in cur_v_mag:
+                if w in overlap:
+                    new_seq_mag.append(w)
+            for w in cur_v_aminer:
+                if w in overlap:
+                    new_seq_aminer.append(w)
+            mag_keywords.append(new_seq_mag)
+            aminer_keywords.append(new_seq_aminer)
+        self.mag_keywords = mag_keywords
+        self.aminer_keywords = aminer_keywords
+        print("mag keywords", self.mag_keywords)
 
 
 def filter_aff_neg_pairs():
@@ -367,9 +403,9 @@ if __name__ == "__main__":
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args, use_emb=False)
-    # dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
-    #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    # dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args, use_emb=False)
+    dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
+                              args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
     # filter_aff_neg_pairs()
     # filter_hard_aff_pairs()
     # check_labeled_zfj()

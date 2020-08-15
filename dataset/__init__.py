@@ -99,10 +99,18 @@ def gen_all_domain_tokenizer():
     # aff
     file_dir = settings.AFF_DATA_DIR
     # load training pairs
-    pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
-    pos_pairs = [(p['aminer_affi'], p['mag_affi']) for p in pos_pairs]
-    neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+    # pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
+    # pos_pairs = [(p['aminer_affi'], p['mag_affi']) for p in pos_pairs]
+    # neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+    # neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
+    pos_pairs = data_utils.load_json(file_dir, "label_data_aff_zhoushao.json")[:600]
+    pos_pairs = [({"name": p["affiliation"]}, {"DisplayName": p["label"]}) for p in pos_pairs if p["label"] != "[NIF]"]
+    neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi_clean.json')[:600]
     neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
+    pairs_add = data_utils.load_json(file_dir, "mag_aminer_hard_correct_zfj_copy.json")
+    print("add pairs", len(pairs_add))
+    pos_pairs += [(p['aminer_affi'], p['mag_affi']) for p in pairs_add if p["label_zfj"] == "1"]
+    neg_pairs += [(p['aminer_affi'], p['mag_affi']) for p in pairs_add if p["label_zfj"] == "0"]
     n_pos = len(pos_pairs)
     # labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
     # pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
