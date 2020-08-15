@@ -8,6 +8,7 @@ import os
 from os.path import join
 import numpy as np
 import torch
+import pandas as pd
 import sklearn
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.utils.data import Dataset
@@ -40,14 +41,22 @@ class AffCNNMatchDataset(Dataset):
         self.tokenizer = data_utils.load_large_obj(settings.OUT_DIR, "tokenizer_all_domain.pkl")
 
         # load training pairs
-        pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
-        pos_pairs = [(p['aminer_affi'], p['mag_affi']) for p in pos_pairs]
-        neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+        # pos_pairs = data_utils.load_json(file_dir, 'train_positive_affi.json')
+        # pos_pairs = [(p['aminer_affi'], p['mag_affi']) for p in pos_pairs]
+        pos_pairs = data_utils.load_json(file_dir, "label_data_aff_zhoushao.json")[:600]
+        pos_pairs = [({"name": p["affiliation"]}, {"DisplayName": p["label"]}) for p in pos_pairs if p["label"] != "[NIF]"]
+        # neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi.json')
+        neg_pairs = data_utils.load_json(file_dir, 'train_negative_affi_clean.json')[:600]
         neg_pairs = [(p['aminer_affi'], p['mag_affi']) for p in neg_pairs]
+        pairs_add = data_utils.load_json(file_dir, "mag_aminer_hard_correct_zfj_copy.json")
+        print("add pairs", len(pairs_add))
+        pos_pairs += [(p['aminer_affi'], p['mag_affi']) for p in pairs_add if p["label_zfj"] == "1"]
+        neg_pairs += [(p['aminer_affi'], p['mag_affi']) for p in pairs_add if p["label_zfj"] == "0"]
         n_pos = len(pos_pairs)
-        labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
-        pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
-        # pairs = pos_pairs + neg_pairs  # label balanced is important
+        # labels = [1] * len(pos_pairs) + [0] * len(pos_pairs)
+        labels = [1] * len(pos_pairs) + [0] * len(neg_pairs)
+        # pairs = pos_pairs + [neg_pairs[x] for x in range(n_pos)]  # label balanced is important
+        pairs = pos_pairs + neg_pairs  # label balanced is important
 
         n_matrix = len(pairs)
         self.X_long = np.zeros((n_matrix, self.matrix_size_1_long, self.matrix_size_1_long))
@@ -84,8 +93,10 @@ class AffCNNMatchDataset(Dataset):
                 random_state=seed
             )
 
-        n_train = args.train_num
-        n_test = args.test_num
+        self.N = len(self.Y)
+
+        n_train = int(self.N*0.6)
+        n_test = int(self.N*0.2)
 
         train_data = {}
         train_data["x1"] = self.X_long[:n_train]
@@ -111,7 +122,6 @@ class AffCNNMatchDataset(Dataset):
         data_utils.dump_large_obj(test_data, out_dir, "aff_test.pkl")
         data_utils.dump_large_obj(valid_data, out_dir, "aff_valid.pkl")
 
-        self.N = len(self.Y)
 
     def __len__(self):
         return self.N
@@ -247,8 +257,8 @@ class AffRNNMatchDataset(Dataset):
 
         self.N = len(self.labels)
 
-        n_train = args.train_num
-        n_test = args.test_num
+        n_train = int(self.N * 0.6)
+        n_test = int(self.N * 0.2)
 
         train_data = {}
         train_data["x1_seq1"] = self.mag[:n_train]
@@ -282,6 +292,67 @@ class AffRNNMatchDataset(Dataset):
         data_utils.dump_large_obj(valid_data, out_dir, "aff_rnn_valid.pkl")
 
 
+def filter_aff_neg_pairs():
+    neg_pairs = data_utils.load_json(settings.AFF_DATA_DIR, 'train_negative_affi.json')
+    neg_pairs_cleaned = []
+    for i, pair in enumerate(neg_pairs):
+        if i % 100 == 0:
+            print("pair", i)
+        mag_aff = pair["mag_affi"]
+        aminer_aff = pair["aminer_affi"]
+        aff1 = mag_aff["NormalizedName"].split()
+        aff2 = aminer_aff["main_body"].split()
+        common = set(aff1).intersection(aff2)
+        if len(common) > 1:
+            neg_pairs_cleaned.append(pair)
+    print("after cleaned", len(neg_pairs_cleaned))
+    data_utils.dump_json(neg_pairs_cleaned, settings.AFF_DATA_DIR, "train_negative_affi_clean.json")
+
+
+def filter_hard_aff_pairs():
+    df = pd.read_excel(join(settings.AFF_DATA_DIR, "mag_aminer_1（人工标注）.xls"))
+    # print(df)
+    pairs = []
+    for index, row in df.iterrows():
+        mag_aff2 = row["mag_NormalizedName"].lower()
+        aminer_aff2 = row["aminer_main_body"].lower()
+        label = row["label"]
+        common = set(aminer_aff2.split()).intersection(mag_aff2.split())
+        if len(common) > 0:
+            print(mag_aff2, "---", aminer_aff2, label)
+            mag_aff1 = row["mag_DisplayName"].lower()
+            aminer_aff1 = row["aminer_org_name"].lower()
+            mag_id = row["mag_id"]
+            aminer_id = row["aminer_id"]
+            cur_dict = {
+                "mag_affi": {
+                    "id": mag_id,
+                    "DisplayName": mag_aff1,
+                    "NormalizedName": mag_aff2
+                },
+                "aminer_affi": {
+                    "id": aminer_id,
+                    "name": aminer_aff1,
+                    "main_body": aminer_aff2
+                },
+                "label": label,
+                "label_zfj": ""
+            }
+            pairs.append(cur_dict)
+
+    print("n_pairs", len(pairs))
+    data_utils.dump_json(pairs, settings.AFF_DATA_DIR, "mag_aminer_hard_correct_zfj.json")
+
+
+def check_labeled_zfj():
+    pairs = data_utils.load_json(settings.AFF_DATA_DIR, "mag_aminer_hard_correct_zfj_copy.json")
+    n_label_zfj = 0
+    for pair in pairs:
+        if pair["label_zfj"]:
+            n_label_zfj += 1
+    print("labeled until now", n_label_zfj)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--file-dir', type=str, default=settings.AFF_DATA_DIR, help="Input file directory")
@@ -299,3 +370,6 @@ if __name__ == "__main__":
     dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args, use_emb=False)
     # dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
     #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    # filter_aff_neg_pairs()
+    # filter_hard_aff_pairs()
+    # check_labeled_zfj()
