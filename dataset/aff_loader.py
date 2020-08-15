@@ -403,9 +403,9 @@ if __name__ == "__main__":
     parser.add_argument('--max-key-sequence-length', type=int, default=8,
                         help="Max key sequence length for key sequences")
     args = parser.parse_args()
-    # dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args, use_emb=False)
-    dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
-                              args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
+    dataset = AffCNNMatchDataset(args.file_dir, args.matrix_size1, args.matrix_size2, args.seed, shuffle=args.shuffle, args=args, use_emb=False)
+    # dataset = AffRNNMatchDataset(args.file_dir, args.max_sequence_length,
+    #                           args.max_key_sequence_length, shuffle=True, seed=args.seed, args=args)
     # filter_aff_neg_pairs()
     # filter_hard_aff_pairs()
     # check_labeled_zfj()
