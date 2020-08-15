@@ -63,7 +63,8 @@ argparser.add_argument("--m_rank", type=int, default=10)
 argparser.add_argument("--lambda_entropy", type=float, default=0.0)
 argparser.add_argument("--load_model", type=str)
 argparser.add_argument("--save_model", type=str)
-argparser.add_argument("--base_model", type=str, default="cnn")
+argparser.add_argument("--base_model", type=str, default="rnn")
+argparser.add_argument("--attn-type", type=str, default="cor")
 argparser.add_argument("--metric", type=str, default="mahalanobis",
                        help="mahalanobis: mahalanobis distance; biaffine: biaffine distance")
 
@@ -156,7 +157,15 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             support_ids = [x for x in source_ids]  # experts
 
             # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-            source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+
+            if args.attn_type == "onehot":
+                source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+            elif args.attn_type == "cor":
+                source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in
+                                 source_ids]
+            else:
+                raise NotImplementedError
 
             # source_alphas = [
             #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
@@ -224,7 +233,15 @@ def evaluate(epoch, encoders, classifiers, attn_mats, data_loader, return_best_t
             #     torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze()
             #     for j in source_ids]
             # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
-            source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+            # source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+
+            if args.attn_type == "onehot":
+                source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+            elif args.attn_type == "cor":
+                source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in
+                                 source_ids]
+            else:
+                raise NotImplementedError
 
             support_alphas = [source_alphas[x] for x in support_ids]
             support_alphas = softmax(support_alphas)
@@ -362,7 +379,12 @@ def train_epoch(iter_cnt, encoders, classifiers, attn_mats, train_loader_dst, ar
         support_ids = [x for x in source_ids]  # experts
         # print("attn mats", attn_mats)
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j]).squeeze() for j in source_ids]
-        source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+        if args.attn_type == "onehot":
+            source_alphas = [attn_mats[j](one_hot_sources[j]).squeeze() for j in source_ids]
+        elif args.attn_type == "cor":
+            source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
+        else:
+            raise NotImplementedError
 
         # source_alphas = [attn_mats[j](hidden_from_src_enc[j], hidden_from_dst_enc).squeeze() for j in source_ids]
         # source_alphas = [torch.bmm(attn_mats[j](hidden_from_src_enc[j]).unsqueeze(1), hidden_from_dst_enc.unsqueeze(2)).squeeze() for j in source_ids]
@@ -524,12 +546,19 @@ def train(args):
         # print(cur_att_weight)
         cur_att_weight.weight = nn.Parameter(torch.ones(size=(1, len(encoders_src))), requires_grad=True)
         print("init cur att weight", cur_att_weight.weight)
-        attn_mats.append(
-            # nn.Linear(encoders_src[0].n_out, 1)
-            cur_att_weight
-            # nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
-            # MulInteractAttention(encoders_src[0].n_out, 16)
-        )
+        if args.attn_type == "onehot":
+            attn_mats.append(
+                # nn.Linear(encoders_src[0].n_out, 1)
+                cur_att_weight
+                # nn.Linear(encoders_src[0].n_out, encoders_src[0].n_out)
+                # MulInteractAttention(encoders_src[0].n_out, 16)
+            )
+        elif args.attn_type == "cor":
+            attn_mats.append(
+                MulInteractAttention(encoders_src[0].n_out, 16)
+            )
+        else:
+            raise NotImplementedError
         classifiers.append(classifier)
     print("classifier build", classifiers[0])
 
